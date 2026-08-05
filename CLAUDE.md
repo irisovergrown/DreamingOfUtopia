@@ -82,6 +82,18 @@ in-fiction studio banner "Ninth Signal."
   artists/modelers
 - PvP matchmaking: public queues, ranked/casual, and private servers — all
   planned
+- Player board piece ("Cepter token," currently a placeholder ball spawned
+  by `Main.server.lua`) will be a custom character/piece model, not the
+  default Roblox avatar. This model is itself a cosmetic slot under the
+  existing cosmetic-Robux-purchases monetization decision.
+- Camera is match-wide and turn-synced, Culdcept Saga style: a single
+  angled top-down/side "stage" camera that snaps to focus on whichever
+  player currently has the turn. Everyone in the match sees the same
+  framing at the same time — this is NOT free per-player camera control,
+  and not just "look at your own Cepter." Implies a future client-side
+  system (e.g. `CameraService`, LocalScript) that reacts to match-wide turn
+  state — depends on MatchService (turn order) existing first, so it can't
+  be built until that system exists.
 
 ## Still undecided / open
 
