@@ -1,6 +1,17 @@
 # Dreaming of Utopia
 
-Roblox board/card game (Culdcept-style). See project brief in conversation history for full design context.
+Roblox board/card game (Culdcept-style). See `CLAUDE.md` for the full
+project brief and design context — it loads automatically for Claude Code
+sessions in this repo.
+
+## Working locally with Roblox Studio (optional)
+
+`.mcp.json` declares a `Roblox_Studio` MCP server for direct, live editing
+of an open Roblox Studio place from a **local** Claude Code / Claude
+Desktop session on the same Windows machine as Studio (requires Roblox's
+Studio MCP companion running — launched via `%LOCALAPPDATA%\Roblox\mcp.bat`).
+This only works locally; cloud/web sessions fall back to the manual
+copy-paste workflow described in `CLAUDE.md`.
 
 ## Repo layout
 
