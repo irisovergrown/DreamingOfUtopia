@@ -177,15 +177,26 @@ Systems built so far:
   `GetChainMultiplier`, `GetLandBonusHP`). Fires `TileOwnerChanged` /
   `TileLeveledUp` signals; other systems must go through its public API,
   never touch tile state directly.
+- **`Systems/MovementService`** (ModuleScript, server) — owns each Cepter's
+  (player's) board position and dice rolling (`RollDice`, `MoveCepter`,
+  `GetCurrentTile`, `GetLapCount`). Moves tile-by-tile via
+  `BoardData.GetNextTileId`, deliberately has no knowledge of tile
+  ownership/tolls. Fires `CepterMoved` (per step), `CepterLanded` (move
+  finished — this is the hook point for BoardService/BattleService to react
+  to landing), and `LapCompleted` (passed Start — hook point for the lap
+  bonus once EconomyService exists).
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
-  BoardService, builds the physical board onto the baseplate from
-  BoardData/EraData, and wires BoardService signals to a simple
-  BillboardGui label per tile (owner/level/era, no real art).
+  BoardService and MovementService, builds the physical board onto the
+  baseplate from BoardData/EraData, wires their signals to visuals (tile
+  labels/material, and a per-player ball "Cepter token" that walks the
+  board), and registers/cleans up Cepters on PlayerAdded/PlayerRemoving.
+  Includes a **temporary** `/roll` chat command so movement is testable
+  without real turn input — replace once MatchService/UIService exist.
 
-Not yet built: MovementService (dice/movement), CardService (creature/spell/
-item data + deck building), BattleService (challenge resolution), EconomyService
-(gold/TM tracking, win condition), TerraformService, MatchService (turn
-order, match setup, FFA/2v2 modes), UIService, persistence/DataStore layer.
+Not yet built: CardService (creature/spell/item data + deck building),
+BattleService (challenge resolution), EconomyService (gold/TM tracking, win
+condition), TerraformService, MatchService (turn order, match setup, FFA/2v2
+modes), UIService, persistence/DataStore layer.
 
 ## Working style — how to respond (manual copy-paste sessions)
 

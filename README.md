@@ -38,5 +38,7 @@ already be code — headers are plain `--[[ ]]` comments and paste in fine as-is
 - `Shared/BoardData` — static greybox board layout (16-tile perimeter loop)
 - `Systems/BoardService` — authoritative tile ownership/level state, tile
   value & toll formulas
-- `Main.server.lua` — bootstrap: builds the board on the baseplate, wires
-  BoardService signals to visuals
+- `Systems/MovementService` — Cepter board position, dice rolling, move/lap signals
+- `Main.server.lua` — bootstrap: builds the board on the baseplate, spawns
+  Cepter tokens, wires BoardService/MovementService signals to visuals,
+  temporary `/roll` chat command for testing movement
