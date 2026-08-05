@@ -18,11 +18,12 @@
 		and a BillboardGui label, just enough to see the board loop and
 		verify Board/Movement/Battle/Economy state changes render.
 
-		Includes temporary "/roll", "/summon <cardId>", "/challenge <cardId>",
-		"/paytoll", and "/balance" chat commands so movement, battles, and
-		the economy are testable without a real UI/MatchService yet — no
-		turn enforcement, no team/alliance awareness. Replace with
-		UIService-driven input once those systems exist.
+		Player input/output now goes through ReplicatedStorage.Shared.Remotes
+		to the client HUD (StarterPlayerScripts > UIService) instead of chat
+		commands and the output window — Roll/Summon/Challenge/PayToll
+		requests come in via RemoteEvents below, and state pushes back out
+		via StateUpdated/ActionResult. Still no turn enforcement or team/
+		alliance awareness — that needs MatchService, which doesn't exist yet.
 ]]
 
 local Players = game:GetService("Players")
@@ -32,6 +33,7 @@ local Workspace = game:GetService("Workspace")
 
 local BoardData = require(ReplicatedStorage.Shared.BoardData)
 local EraData = require(ReplicatedStorage.Shared.EraData)
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local BoardService = require(ServerScriptService.Systems.BoardService)
 local MovementService = require(ServerScriptService.Systems.MovementService)
 local CardService = require(ServerScriptService.Systems.CardService)
@@ -143,6 +145,36 @@ for _, tile in ipairs(BoardData.Tiles) do
 	refreshTileLabel(tile.Id)
 end
 
+-- Per-player HUD state snapshot, pushed to the client over Remotes.StateUpdated.
+local function buildStateSnapshot(player)
+	local tileId = MovementService.GetCurrentTile(player)
+	local tile = tileId and BoardService.GetTile(tileId)
+	local defender = tileId and BattleService.GetDefender(tileId)
+	local defenderCard = defender and CardService.GetCard(defender.CardId)
+
+	return {
+		Balance = EconomyService.GetBalance(player),
+		TileId = tileId,
+		TileType = tile and tile.TileType,
+		TileEra = tile and tile.Era,
+		TileLevel = tile and tile.Level,
+		TileOwner = tile and tile.Owner,
+		DefenderName = defenderCard and defenderCard.Name,
+		DefenderHP = defender and defender.CurrentHP,
+		Toll = (tile and tile.TileType == "Property" and tile.Owner ~= nil) and BoardService.GetToll(tileId) or 0,
+	}
+end
+
+local function sendStateToPlayer(player)
+	Remotes.StateUpdated:FireClient(player, buildStateSnapshot(player))
+end
+
+local function refreshAllPlayerStates()
+	for _, player in ipairs(Players:GetPlayers()) do
+		sendStateToPlayer(player)
+	end
+end
+
 -- React to BoardService state changes instead of polling — the same
 -- cross-system signal pattern MovementService and BattleService use.
 BoardService.TileOwnerChanged:Connect(function(tileId, newOwnerUserId)
@@ -151,10 +183,12 @@ BoardService.TileOwnerChanged:Connect(function(tileId, newOwnerUserId)
 		part.Material = newOwnerUserId and Enum.Material.Neon or Enum.Material.SmoothPlastic
 	end
 	refreshTileLabel(tileId)
+	refreshAllPlayerStates()
 end)
 
 BoardService.TileLeveledUp:Connect(function(tileId, _newLevel)
 	refreshTileLabel(tileId)
+	refreshAllPlayerStates()
 end)
 
 -- Cepter tokens: one ball per player, walking the board as MovementService moves them.
@@ -178,63 +212,7 @@ local function onPlayerAdded(player)
 	MovementService.RegisterCepter(player)
 	EconomyService.RegisterPlayer(player)
 	createCepterToken(player)
-
-	-- Temporary manual test harness — replace with UIService-driven input
-	-- once MatchService/UIService exist.
-	player.Chatted:Connect(function(message)
-		if message:lower() == "/roll" then
-			local total = MovementService.RollDice(1)
-			print(string.format("[DreamingOfUtopia] %s rolled %d", player.Name, total))
-			MovementService.MoveCepter(player, total)
-			return
-		end
-
-		local summonCardIdText = message:match("^/summon%s+(%d+)$")
-		if summonCardIdText ~= nil then
-			local tileId = MovementService.GetCurrentTile(player)
-			local success, reason = BattleService.SummonCreature(player, tonumber(summonCardIdText), tileId)
-			print(string.format(
-				"[DreamingOfUtopia] %s summon on tile #%d: %s",
-				player.Name,
-				tileId,
-				success and "claimed" or ("failed (" .. tostring(reason) .. ")")
-			))
-			return
-		end
-
-		local challengeCardIdText = message:match("^/challenge%s+(%d+)$")
-		if challengeCardIdText ~= nil then
-			local tileId = MovementService.GetCurrentTile(player)
-			local attackerWon, reason = BattleService.ChallengeTile(player, tonumber(challengeCardIdText), tileId)
-			if reason ~= nil then
-				print(string.format("[DreamingOfUtopia] %s challenge on tile #%d failed (%s)", player.Name, tileId, reason))
-			else
-				print(string.format(
-					"[DreamingOfUtopia] %s challenge on tile #%d: %s",
-					player.Name,
-					tileId,
-					attackerWon and "won, tile claimed" or "lost, defender holds"
-				))
-			end
-			return
-		end
-
-		if message:lower() == "/paytoll" then
-			local tileId = MovementService.GetCurrentTile(player)
-			local success, reason = EconomyService.PayToll(player, tileId)
-			print(string.format(
-				"[DreamingOfUtopia] %s pay toll on tile #%d: %s",
-				player.Name,
-				tileId,
-				success and "paid" or ("failed (" .. tostring(reason) .. ")")
-			))
-			return
-		end
-
-		if message:lower() == "/balance" then
-			print(string.format("[DreamingOfUtopia] %s has %d Magic", player.Name, EconomyService.GetBalance(player)))
-		end
-	end)
+	sendStateToPlayer(player)
 end
 
 local function onPlayerRemoving(player)
@@ -252,6 +230,7 @@ MovementService.CepterMoved:Connect(function(player, _fromTileId, toTileId)
 	if token ~= nil then
 		token.Position = getTileWorldPosition(toTileId, CEPTER_TOKEN_HEIGHT)
 	end
+	sendStateToPlayer(player)
 end)
 
 MovementService.CepterLanded:Connect(function(player, tileId)
@@ -260,6 +239,57 @@ end)
 
 MovementService.LapCompleted:Connect(function(player, lapCount)
 	print(string.format("[DreamingOfUtopia] %s completed lap %d", player.Name, lapCount))
+end)
+
+EconomyService.BalanceChanged:Connect(function(userId, _newBalance)
+	local player = Players:GetPlayerByUserId(userId)
+	if player ~= nil then
+		sendStateToPlayer(player)
+	end
+end)
+
+-- Player action requests from the client HUD (StarterPlayerScripts > UIService).
+-- `player` always comes from OnServerEvent's own argument, never from the
+-- client — cannot be spoofed, this is what keeps these calls authoritative.
+Remotes.RollRequest.OnServerEvent:Connect(function(player)
+	local total = MovementService.RollDice(1)
+	print(string.format("[DreamingOfUtopia] %s rolled %d", player.Name, total))
+	Remotes.ActionResult:FireClient(player, string.format("Rolled %d", total))
+	MovementService.MoveCepter(player, total)
+end)
+
+Remotes.SummonRequest.OnServerEvent:Connect(function(player, cardId)
+	if typeof(cardId) ~= "number" then
+		Remotes.ActionResult:FireClient(player, "Invalid card id")
+		return
+	end
+
+	local tileId = MovementService.GetCurrentTile(player)
+	local success, reason = BattleService.SummonCreature(player, cardId, tileId)
+	Remotes.ActionResult:FireClient(player, success and ("Claimed tile #" .. tileId) or ("Summon failed: " .. tostring(reason)))
+end)
+
+Remotes.ChallengeRequest.OnServerEvent:Connect(function(player, cardId)
+	if typeof(cardId) ~= "number" then
+		Remotes.ActionResult:FireClient(player, "Invalid card id")
+		return
+	end
+
+	local tileId = MovementService.GetCurrentTile(player)
+	local attackerWon, reason = BattleService.ChallengeTile(player, cardId, tileId)
+	local message
+	if reason ~= nil then
+		message = "Challenge failed: " .. reason
+	else
+		message = attackerWon and ("Won! Claimed tile #" .. tileId) or "Lost the challenge"
+	end
+	Remotes.ActionResult:FireClient(player, message)
+end)
+
+Remotes.PayTollRequest.OnServerEvent:Connect(function(player)
+	local tileId = MovementService.GetCurrentTile(player)
+	local success, reason = EconomyService.PayToll(player, tileId)
+	Remotes.ActionResult:FireClient(player, success and "Toll paid" or ("Pay toll failed: " .. tostring(reason)))
 end)
 
 EconomyService.WinTargetReached:Connect(function(userId, balance)

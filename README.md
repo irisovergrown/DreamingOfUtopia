@@ -20,9 +20,10 @@ into Roblox Studio (no Rojo sync). The `src/` folder mirrors the Studio
 instance tree directly:
 
 ```
-src/ReplicatedStorage/Shared/...       -> ReplicatedStorage > Shared > ...
-src/ServerScriptService/Systems/...    -> ServerScriptService > Systems > ...
-src/ServerScriptService/Main.server.lua -> ServerScriptService > Main (Script)
+src/ReplicatedStorage/Shared/...                          -> ReplicatedStorage > Shared > ...
+src/ServerScriptService/Systems/...                        -> ServerScriptService > Systems > ...
+src/ServerScriptService/Main.server.lua                    -> ServerScriptService > Main (Script)
+src/StarterPlayer/StarterPlayerScripts/UIService.client.lua -> StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
 ```
 
 Each file's header comment states its Roblox instance type (`Script` /
@@ -46,7 +47,11 @@ already be code — headers are plain `--[[ ]]` comments and paste in fine as-is
 - `Systems/BattleService` — claim/challenge resolution (ST vs effective HP),
   spends Magic Cost via EconomyService, tracks which creature defends each
   claimed tile
+- `Shared/Remotes` — client-server RemoteEvent bridge (Roll/Summon/Challenge/
+  PayToll requests, StateUpdated/ActionResult pushes)
 - `Main.server.lua` — bootstrap: builds the board on the baseplate, spawns
-  Cepter tokens, wires Board/Movement/Battle/Economy signals to visuals,
-  temporary `/roll`, `/summon <cardId>`, `/challenge <cardId>`, `/paytoll`,
-  `/balance` chat commands for testing
+  Cepter tokens, wires Board/Movement/Battle/Economy signals to visuals and
+  to per-player state pushes over Remotes, handles the 4 action RemoteEvents
+- `StarterPlayer/UIService.client.lua` — plain monospace HUD (balance, tile
+  info, card-id input, Roll/Summon/Challenge/Pay Toll buttons) replacing the
+  old chat-command test harness

@@ -124,9 +124,10 @@ edit piece by piece without cascading confusion.
 `src/` mirrors the Roblox Studio instance tree directly:
 
 ```
-src/ReplicatedStorage/Shared/...        -> ReplicatedStorage > Shared > ...
-src/ServerScriptService/Systems/...     -> ServerScriptService > Systems > ...
-src/ServerScriptService/Main.server.lua -> ServerScriptService > Main (Script)
+src/ReplicatedStorage/Shared/...                          -> ReplicatedStorage > Shared > ...
+src/ServerScriptService/Systems/...                        -> ServerScriptService > Systems > ...
+src/ServerScriptService/Main.server.lua                    -> ServerScriptService > Main (Script)
+src/StarterPlayer/StarterPlayerScripts/UIService.client.lua -> StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
 ```
 
 Every script file's header comment states its Roblox instance type
@@ -234,20 +235,40 @@ Systems built so far:
   doesn't exist yet. Calls BoardService/CardService/EconomyService through
   their public APIs directly (layered system on top, same pattern as
   CardService -> CardData), fires `TileClaimed` / `ChallengeResolved` signals.
+- **`Shared/Remotes`** (ModuleScript) — the only client-server bridge so
+  far. Creates (server) / waits for (client) a fixed set of RemoteEvents
+  under `ReplicatedStorage > Remotes`, returned as a name-keyed table so
+  both sides reference the same instances instead of magic strings:
+  `RollRequest`, `SummonRequest(cardId)`, `ChallengeRequest(cardId)`,
+  `PayTollRequest` (client -> server), `StateUpdated(snapshot)`,
+  `ActionResult(message)` (server -> client). Request handlers must read
+  the acting player from `OnServerEvent`'s own first argument — never a
+  client-supplied one — to stay authoritative.
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
-  BoardService, MovementService, CardService, EconomyService, and
-  BattleService, builds the physical board onto the baseplate from
-  BoardData/EraData, wires their signals to visuals (tile labels/material,
-  defender name+HP on the label, and a per-player ball "Cepter token" that
-  walks the board), and registers/cleans up Cepters and Magic balances on
-  PlayerAdded/PlayerRemoving. Includes **temporary** `/roll`,
-  `/summon <cardId>`, `/challenge <cardId>`, `/paytoll`, and `/balance` chat
-  commands so movement, battles, and the economy are testable without real
-  turn input — replace once MatchService/UIService exist.
+  BoardService, MovementService, CardService, EconomyService, BattleService,
+  and Remotes; builds the physical board onto the baseplate from
+  BoardData/EraData; wires signals to visuals (tile labels/material,
+  defender name+HP on the label, a per-player ball "Cepter token" that
+  walks the board); registers/cleans up Cepters and Magic balances on
+  PlayerAdded/PlayerRemoving. Player input/output now goes through Remotes
+  to the client HUD instead of chat commands/output-window checking: the 4
+  `*Request` RemoteEvents are handled here (calling the same services the
+  old chat commands did) and `sendStateToPlayer`/`refreshAllPlayerStates`
+  push a per-player state snapshot over `StateUpdated` whenever anything
+  relevant changes (movement, balance, tile ownership/level).
+- **`StarterPlayer/UIService.client.lua`** (LocalScript) — first slice of
+  UIService: a plain monospace "terminal" HUD (`ScreenGui`/`Frame`, no card
+  art or animation) with a Magic balance line, current-tile info, a card-id
+  `TextBox`, and Roll/Summon/Challenge/Pay Toll buttons that fire the
+  matching Remote. Reads `CardData`/`EraData` directly for a card-id legend
+  (safe — pure static Shared data, no security concern). Only talks to the
+  server through `Shared.Remotes`; cannot and does not require server
+  ModuleScripts.
 
 Not yet built: TerraformService, MatchService (turn order, match setup,
 FFA/2v2 modes, team/alliance awareness, actually ending a match on
-`EconomyService.WinTargetReached`), UIService, persistence/DataStore layer.
+`EconomyService.WinTargetReached`), persistence/DataStore layer, and the
+rest of UIService (card hand, deck builder, turn indicator).
 
 ### Planned architecture change: hand-authored boards (not yet built)
 
