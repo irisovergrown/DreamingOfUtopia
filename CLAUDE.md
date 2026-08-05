@@ -204,11 +204,40 @@ Systems built so far:
   board), and registers/cleans up Cepters on PlayerAdded/PlayerRemoving.
   Includes a **temporary** `/roll` chat command so movement is testable
   without real turn input — replace once MatchService/UIService exist.
+- **`Shared/CardData`** (ModuleScript) — static registry of Creature/Spell/
+  Item cards. Small placeholder set (one creature per confirmed era, one
+  generic spell, one generic item) — not the real 60-80 card launch
+  library, which is still open per the brief.
+- **`Systems/CardService`** (ModuleScript, server) — query API over
+  CardData (`GetCard`, `GetAllCards`, `GetCardsByType`, `GetCardsByEra`).
+  Deliberately no hand/deck/unlock state yet — that needs MatchService and
+  a persistence layer, neither of which exist. `Main.server.lua` just
+  requires it at boot to confirm the registry loads; nothing visualizes
+  cards yet since there's no summon/battle flow to trigger it.
 
-Not yet built: CardService (creature/spell/item data + deck building),
-BattleService (challenge resolution), EconomyService (gold/TM tracking, win
-condition), TerraformService, MatchService (turn order, match setup, FFA/2v2
-modes), UIService, persistence/DataStore layer.
+Not yet built: BattleService (challenge resolution), EconomyService (gold/TM
+tracking, win condition), TerraformService, MatchService (turn order, match
+setup, FFA/2v2 modes), UIService, persistence/DataStore layer.
+
+### Planned architecture change: hand-authored boards (not yet built)
+
+Board layout will eventually move from `BoardData`'s hardcoded Lua table to
+hand-placed geometry: the developer builds tiles as Parts directly in
+Workspace (own board designs, not code-generated), tags each with
+`CollectionService` as `"Tile"`, and sets attributes directly on the part
+in Studio's Properties panel — at minimum `Id` (order in the movement loop
+— tile adjacency is NOT inferable from spatial position, so this can't be
+skipped) and `Era` (must match an `EraData.Eras` key, or blank for Start/
+neutral). `BoardService` would then build its tile registry by scanning
+`CollectionService:GetTagged("Tile")` and reading attributes, instead of
+iterating `BoardData.Tiles`; `Main.server.lua` would stop spawning tile
+parts procedurally and just hook up the ones already placed by hand.
+`BoardService`'s public API (`GetTile`, `GetToll`, etc.) does not need to
+change — only its data source. `MovementService` already depends only on
+`BoardData.GetNextTileId`, so as long as the replacement board-loading code
+preserves an equivalent function keyed by `Id`, `MovementService` needs no
+changes either. Not built yet — deferred so a currently-working, tested
+system (procedural board + movement) isn't touched without reason.
 
 ## Working style — how to respond (manual copy-paste sessions)
 

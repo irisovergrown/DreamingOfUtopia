@@ -9,7 +9,9 @@
 		BoardService and physically builds the greybox board (BoardData)
 		onto the baseplate so the layout is visible and testable in Studio.
 		Also registers each joining player with MovementService and gives
-		them a simple ball "Cepter token" that walks the board on move.
+		them a simple ball "Cepter token" that walks the board on move, and
+		requires CardService so its card registry loads at boot (nothing to
+		visualize yet — BattleService/UIService will use it later).
 		This is the wiring layer — it requires systems and connects their
 		Signals, but game systems still never require each other directly.
 
@@ -31,6 +33,7 @@ local BoardData = require(ReplicatedStorage.Shared.BoardData)
 local EraData = require(ReplicatedStorage.Shared.EraData)
 local BoardService = require(ServerScriptService.Systems.BoardService)
 local MovementService = require(ServerScriptService.Systems.MovementService)
+local CardService = require(ServerScriptService.Systems.CardService)
 
 BoardService.Init()
 
@@ -203,3 +206,4 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 print("[DreamingOfUtopia] Board initialized:", #BoardData.Tiles, "tiles")
+print("[DreamingOfUtopia] Cards loaded:", #CardService.GetAllCards())
