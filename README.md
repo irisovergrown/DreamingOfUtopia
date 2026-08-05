@@ -41,8 +41,12 @@ already be code — headers are plain `--[[ ]]` comments and paste in fine as-is
 - `Systems/MovementService` — Cepter board position, dice rolling, move/lap signals
 - `Shared/CardData` — static Creature/Spell/Item card registry (placeholder set)
 - `Systems/CardService` — query API over CardData
+- `Systems/EconomyService` — Magic balances, lap bonus (auto-applied),
+  toll payment, win-target detection
 - `Systems/BattleService` — claim/challenge resolution (ST vs effective HP),
-  tracks which creature defends each claimed tile
+  spends Magic Cost via EconomyService, tracks which creature defends each
+  claimed tile
 - `Main.server.lua` — bootstrap: builds the board on the baseplate, spawns
-  Cepter tokens, wires Board/Movement/Battle signals to visuals, temporary
-  `/roll`, `/summon <cardId>`, `/challenge <cardId>` chat commands for testing
+  Cepter tokens, wires Board/Movement/Battle/Economy signals to visuals,
+  temporary `/roll`, `/summon <cardId>`, `/challenge <cardId>`, `/paytoll`,
+  `/balance` chat commands for testing

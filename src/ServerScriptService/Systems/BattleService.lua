@@ -13,14 +13,18 @@
 		agnostic; this module layers combat state on top of it and CardService,
 		calling their public APIs rather than reaching into their internals.
 
+		SummonCreature/ChallengeTile spend the card's Magic Cost via
+		EconomyService.SpendMagic before resolving — validated last, after
+		every other rejection reason, so a failed claim/challenge never
+		costs Magic.
+
 		Deliberately NOT built here (see CLAUDE.md for the full list of gaps):
-		- Paying a toll instead of challenging — no currency/EconomyService yet.
-		- Summon or tile-level-up costs — CardData.Cost exists but nothing
-		  deducts it yet, same reason.
+		- Paying a toll instead of challenging lives in EconomyService.PayToll,
+		  not here — it's a currency transaction, not a battle outcome.
+		- Tile-level-up costs — that's a landing-on-your-own-tile action,
+		  out of scope for this slice regardless of currency existing now.
 		- Turn enforcement / team-alliance awareness — needs MatchService,
 		  which doesn't exist yet. Any player can call this at any time.
-		- Landing-on-your-own-tile actions (e.g. leveling up) — out of scope
-		  for this slice.
 
 		Battle resolution is a single binary comparison (attacker ST vs
 		defender's effective HP at the moment of the challenge) — no
@@ -48,6 +52,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Signal = require(ReplicatedStorage.Shared.Signal)
 local BoardService = require(ServerScriptService.Systems.BoardService)
 local CardService = require(ServerScriptService.Systems.CardService)
+local EconomyService = require(ServerScriptService.Systems.EconomyService)
 
 local BattleService = {}
 
@@ -104,6 +109,11 @@ function BattleService.SummonCreature(player, cardId, tileId)
 		return false, "Tile is already owned — challenge it instead"
 	end
 
+	local spendSuccess, spendReason = EconomyService.SpendMagic(player, card.Cost)
+	if not spendSuccess then
+		return false, spendReason
+	end
+
 	local userId = getUserId(player)
 
 	-- Set defender state before SetOwner so the BoardService.TileOwnerChanged
@@ -140,6 +150,11 @@ function BattleService.ChallengeTile(player, cardId, tileId)
 	local defender = _defenders[tileId]
 	if defender == nil then
 		return false, "Tile has no defending creature on record"
+	end
+
+	local spendSuccess, spendReason = EconomyService.SpendMagic(player, card.Cost)
+	if not spendSuccess then
+		return false, spendReason
 	end
 
 	local attackerWon = card.ST >= defender.CurrentHP

@@ -207,33 +207,47 @@ Systems built so far:
   CardData (`GetCard`, `GetAllCards`, `GetCardsByType`, `GetCardsByEra`).
   Deliberately no hand/deck/unlock state yet — that needs MatchService and
   a persistence layer, neither of which exist.
+- **`Systems/EconomyService`** (ModuleScript, server) — each player's Magic
+  balance (brief's working-name "Total Magic"/TM). `RegisterPlayer` sets a
+  starting balance; `AddMagic`/`SpendMagic` are the general transaction
+  primitives; `PayToll` is the currency side of landing on an enemy tile
+  (`BattleService.ChallengeTile` is the other option — pay or challenge);
+  `ComputeLapBonus` implements the brief's lap-count/tiles-owned/era-majority
+  formula and is auto-applied by self-subscribing to
+  `MovementService.LapCompleted` (unconditional/automatic, unlike landing
+  choices, so no UI/MatchService dependency needed to trigger it). Fires
+  `WinTargetReached` when a balance crosses the win threshold — does NOT
+  end the match itself, that's MatchService's job once it exists. Known
+  simplification: `PayToll` skips crediting an owner who has since left the
+  game rather than reviving their balance record.
 - **`Systems/BattleService`** (ModuleScript, server) — challenge resolution:
   `SummonCreature` claims an unclaimed Property tile, `ChallengeTile`
   compares attacker ST vs the defender's effective HP (base HP +
   `BoardService.GetLandBonusHP` if the creature's era matches the tile's —
   the first thing to actually exercise that formula) and hands the tile to
-  the winner. Tracks which specific creature defends each claimed tile
-  itself — BoardService stays creature-agnostic (Owner/Level only).
-  Deliberately does NOT do: paying a toll instead of challenging, summon/
-  level-up costs, turn enforcement, or team/alliance awareness — all need
-  EconomyService and/or MatchService, neither of which exist yet. Calls
-  BoardService/CardService through their public APIs directly (layered
-  system on top, same pattern as CardService -> CardData), fires
-  `TileClaimed` / `ChallengeResolved` signals.
+  the winner. Both now spend the card's Magic `Cost` via
+  `EconomyService.SpendMagic` as the last validation step, so a rejected
+  claim/challenge never costs Magic. Tracks which specific creature defends
+  each claimed tile itself — BoardService stays creature-agnostic (Owner/
+  Level only). Deliberately does NOT do: tile-level-up costs, turn
+  enforcement, or team/alliance awareness — all need MatchService, which
+  doesn't exist yet. Calls BoardService/CardService/EconomyService through
+  their public APIs directly (layered system on top, same pattern as
+  CardService -> CardData), fires `TileClaimed` / `ChallengeResolved` signals.
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
-  BoardService, MovementService, CardService, and BattleService, builds the
-  physical board onto the baseplate from BoardData/EraData, wires their
-  signals to visuals (tile labels/material, defender name+HP on the label,
-  and a per-player ball "Cepter token" that walks the board), and
-  registers/cleans up Cepters on PlayerAdded/PlayerRemoving. Includes
-  **temporary** `/roll`, `/summon <cardId>`, and `/challenge <cardId>` chat
-  commands so movement and battles are testable without real turn input —
-  replace once MatchService/UIService exist.
+  BoardService, MovementService, CardService, EconomyService, and
+  BattleService, builds the physical board onto the baseplate from
+  BoardData/EraData, wires their signals to visuals (tile labels/material,
+  defender name+HP on the label, and a per-player ball "Cepter token" that
+  walks the board), and registers/cleans up Cepters and Magic balances on
+  PlayerAdded/PlayerRemoving. Includes **temporary** `/roll`,
+  `/summon <cardId>`, `/challenge <cardId>`, `/paytoll`, and `/balance` chat
+  commands so movement, battles, and the economy are testable without real
+  turn input — replace once MatchService/UIService exist.
 
-Not yet built: EconomyService (gold/TM tracking, win condition, tolls,
-summon/level-up costs), TerraformService, MatchService (turn order, match
-setup, FFA/2v2 modes, team/alliance awareness), UIService, persistence/
-DataStore layer.
+Not yet built: TerraformService, MatchService (turn order, match setup,
+FFA/2v2 modes, team/alliance awareness, actually ending a match on
+`EconomyService.WinTargetReached`), UIService, persistence/DataStore layer.
 
 ### Planned architecture change: hand-authored boards (not yet built)
 

@@ -8,20 +8,20 @@
 		First thing that runs when the place starts. Initializes
 		BoardService and physically builds the greybox board (BoardData)
 		onto the baseplate so the layout is visible and testable in Studio.
-		Also registers each joining player with MovementService and gives
-		them a simple ball "Cepter token" that walks the board on move, and
-		requires CardService so its card registry loads at boot.
+		Also registers each joining player with MovementService (board
+		position) and EconomyService (Magic balance), and gives them a
+		simple ball "Cepter token" that walks the board on move.
 		This is the wiring layer — it requires systems and connects their
 		Signals, but game systems still never require each other directly.
 
 		Nothing here is meant to be final visual art — plain colored parts
 		and a BillboardGui label, just enough to see the board loop and
-		verify BoardService/MovementService/BattleService state changes render.
+		verify Board/Movement/Battle/Economy state changes render.
 
-		Includes temporary "/roll", "/summon <cardId>", and
-		"/challenge <cardId>" chat commands so movement and battles are
-		testable without a real UI/MatchService yet — no turn enforcement,
-		no cost/toll payment (no EconomyService yet). Replace with
+		Includes temporary "/roll", "/summon <cardId>", "/challenge <cardId>",
+		"/paytoll", and "/balance" chat commands so movement, battles, and
+		the economy are testable without a real UI/MatchService yet — no
+		turn enforcement, no team/alliance awareness. Replace with
 		UIService-driven input once those systems exist.
 ]]
 
@@ -35,9 +35,11 @@ local EraData = require(ReplicatedStorage.Shared.EraData)
 local BoardService = require(ServerScriptService.Systems.BoardService)
 local MovementService = require(ServerScriptService.Systems.MovementService)
 local CardService = require(ServerScriptService.Systems.CardService)
+local EconomyService = require(ServerScriptService.Systems.EconomyService)
 local BattleService = require(ServerScriptService.Systems.BattleService)
 
 BoardService.Init()
+EconomyService.Init()
 BattleService.Init()
 
 local boardFolder = Instance.new("Folder")
@@ -174,6 +176,7 @@ end
 
 local function onPlayerAdded(player)
 	MovementService.RegisterCepter(player)
+	EconomyService.RegisterPlayer(player)
 	createCepterToken(player)
 
 	-- Temporary manual test harness — replace with UIService-driven input
@@ -213,12 +216,30 @@ local function onPlayerAdded(player)
 					attackerWon and "won, tile claimed" or "lost, defender holds"
 				))
 			end
+			return
+		end
+
+		if message:lower() == "/paytoll" then
+			local tileId = MovementService.GetCurrentTile(player)
+			local success, reason = EconomyService.PayToll(player, tileId)
+			print(string.format(
+				"[DreamingOfUtopia] %s pay toll on tile #%d: %s",
+				player.Name,
+				tileId,
+				success and "paid" or ("failed (" .. tostring(reason) .. ")")
+			))
+			return
+		end
+
+		if message:lower() == "/balance" then
+			print(string.format("[DreamingOfUtopia] %s has %d Magic", player.Name, EconomyService.GetBalance(player)))
 		end
 	end)
 end
 
 local function onPlayerRemoving(player)
 	MovementService.RemoveCepter(player)
+	EconomyService.RemovePlayer(player)
 	local token = cepterTokens[player.UserId]
 	if token ~= nil then
 		token:Destroy()
@@ -239,6 +260,14 @@ end)
 
 MovementService.LapCompleted:Connect(function(player, lapCount)
 	print(string.format("[DreamingOfUtopia] %s completed lap %d", player.Name, lapCount))
+end)
+
+EconomyService.WinTargetReached:Connect(function(userId, balance)
+	print(string.format(
+		"[DreamingOfUtopia] Player %d reached the win target with %d Magic! (MatchService will handle real match end later)",
+		userId,
+		balance
+	))
 end)
 
 Players.PlayerAdded:Connect(onPlayerAdded)
