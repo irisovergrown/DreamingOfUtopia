@@ -10,18 +10,19 @@
 		onto the baseplate so the layout is visible and testable in Studio.
 		Also registers each joining player with MovementService and gives
 		them a simple ball "Cepter token" that walks the board on move, and
-		requires CardService so its card registry loads at boot (nothing to
-		visualize yet — BattleService/UIService will use it later).
+		requires CardService so its card registry loads at boot.
 		This is the wiring layer — it requires systems and connects their
 		Signals, but game systems still never require each other directly.
 
 		Nothing here is meant to be final visual art — plain colored parts
 		and a BillboardGui label, just enough to see the board loop and
-		verify BoardService/MovementService state changes render.
+		verify BoardService/MovementService/BattleService state changes render.
 
-		Includes a temporary "/roll" chat command so movement is testable
-		without a real UI/MatchService yet — replace with UIService-driven
-		turn input once that system exists.
+		Includes temporary "/roll", "/summon <cardId>", and
+		"/challenge <cardId>" chat commands so movement and battles are
+		testable without a real UI/MatchService yet — no turn enforcement,
+		no cost/toll payment (no EconomyService yet). Replace with
+		UIService-driven input once those systems exist.
 ]]
 
 local Players = game:GetService("Players")
@@ -34,8 +35,10 @@ local EraData = require(ReplicatedStorage.Shared.EraData)
 local BoardService = require(ServerScriptService.Systems.BoardService)
 local MovementService = require(ServerScriptService.Systems.MovementService)
 local CardService = require(ServerScriptService.Systems.CardService)
+local BattleService = require(ServerScriptService.Systems.BattleService)
 
 BoardService.Init()
+BattleService.Init()
 
 local boardFolder = Instance.new("Folder")
 boardFolder.Name = "Board"
@@ -121,15 +124,25 @@ local function refreshTileLabel(tileId)
 
 	local era = EraData.GetEra(tile.Era)
 	local ownerText = tile.Owner and ("Owner " .. tostring(tile.Owner)) or "Unclaimed"
-	label.Text = string.format("#%d — %s — Lv%d — %s", tile.Id, era.DisplayName, tile.Level, ownerText)
+
+	local defenderText = ""
+	local defender = BattleService.GetDefender(tileId)
+	if defender ~= nil then
+		local card = CardService.GetCard(defender.CardId)
+		if card ~= nil then
+			defenderText = string.format(" — %s (%dHP)", card.Name, defender.CurrentHP)
+		end
+	end
+
+	label.Text = string.format("#%d — %s — Lv%d — %s%s", tile.Id, era.DisplayName, tile.Level, ownerText, defenderText)
 end
 
 for _, tile in ipairs(BoardData.Tiles) do
 	refreshTileLabel(tile.Id)
 end
 
--- React to BoardService state changes instead of polling — the cross-system
--- signal pattern MovementService/BattleService will also use once they exist.
+-- React to BoardService state changes instead of polling — the same
+-- cross-system signal pattern MovementService and BattleService use.
 BoardService.TileOwnerChanged:Connect(function(tileId, newOwnerUserId)
 	local part = tileParts[tileId]
 	if part ~= nil then
@@ -163,13 +176,43 @@ local function onPlayerAdded(player)
 	MovementService.RegisterCepter(player)
 	createCepterToken(player)
 
-	-- Temporary manual test harness — type "/roll" in chat to roll and move.
-	-- Replace with UIService-driven input once MatchService/UIService exist.
+	-- Temporary manual test harness — replace with UIService-driven input
+	-- once MatchService/UIService exist.
 	player.Chatted:Connect(function(message)
 		if message:lower() == "/roll" then
 			local total = MovementService.RollDice(1)
 			print(string.format("[DreamingOfUtopia] %s rolled %d", player.Name, total))
 			MovementService.MoveCepter(player, total)
+			return
+		end
+
+		local summonCardIdText = message:match("^/summon%s+(%d+)$")
+		if summonCardIdText ~= nil then
+			local tileId = MovementService.GetCurrentTile(player)
+			local success, reason = BattleService.SummonCreature(player, tonumber(summonCardIdText), tileId)
+			print(string.format(
+				"[DreamingOfUtopia] %s summon on tile #%d: %s",
+				player.Name,
+				tileId,
+				success and "claimed" or ("failed (" .. tostring(reason) .. ")")
+			))
+			return
+		end
+
+		local challengeCardIdText = message:match("^/challenge%s+(%d+)$")
+		if challengeCardIdText ~= nil then
+			local tileId = MovementService.GetCurrentTile(player)
+			local attackerWon, reason = BattleService.ChallengeTile(player, tonumber(challengeCardIdText), tileId)
+			if reason ~= nil then
+				print(string.format("[DreamingOfUtopia] %s challenge on tile #%d failed (%s)", player.Name, tileId, reason))
+			else
+				print(string.format(
+					"[DreamingOfUtopia] %s challenge on tile #%d: %s",
+					player.Name,
+					tileId,
+					attackerWon and "won, tile claimed" or "lost, defender holds"
+				))
+			end
 		end
 	end)
 end

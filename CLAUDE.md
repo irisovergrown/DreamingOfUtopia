@@ -194,16 +194,11 @@ Systems built so far:
   `GetCurrentTile`, `GetLapCount`). Moves tile-by-tile via
   `BoardData.GetNextTileId`, deliberately has no knowledge of tile
   ownership/tolls. Fires `CepterMoved` (per step), `CepterLanded` (move
-  finished — this is the hook point for BoardService/BattleService to react
-  to landing), and `LapCompleted` (passed Start — hook point for the lap
-  bonus once EconomyService exists).
-- **`Main.server.lua`** (Script, bootstrap/composition root) — requires
-  BoardService and MovementService, builds the physical board onto the
-  baseplate from BoardData/EraData, wires their signals to visuals (tile
-  labels/material, and a per-player ball "Cepter token" that walks the
-  board), and registers/cleans up Cepters on PlayerAdded/PlayerRemoving.
-  Includes a **temporary** `/roll` chat command so movement is testable
-  without real turn input — replace once MatchService/UIService exist.
+  finished — the intended hook point for auto-triggering BattleService on
+  landing once a real turn UI exists to gather player intent; nothing
+  auto-connects to it yet, `Main.server.lua`'s `/summon` and `/challenge`
+  chat commands drive BattleService manually instead), and `LapCompleted`
+  (passed Start — hook point for the lap bonus once EconomyService exists).
 - **`Shared/CardData`** (ModuleScript) — static registry of Creature/Spell/
   Item cards. Small placeholder set (one creature per confirmed era, one
   generic spell, one generic item) — not the real 60-80 card launch
@@ -211,13 +206,34 @@ Systems built so far:
 - **`Systems/CardService`** (ModuleScript, server) — query API over
   CardData (`GetCard`, `GetAllCards`, `GetCardsByType`, `GetCardsByEra`).
   Deliberately no hand/deck/unlock state yet — that needs MatchService and
-  a persistence layer, neither of which exist. `Main.server.lua` just
-  requires it at boot to confirm the registry loads; nothing visualizes
-  cards yet since there's no summon/battle flow to trigger it.
+  a persistence layer, neither of which exist.
+- **`Systems/BattleService`** (ModuleScript, server) — challenge resolution:
+  `SummonCreature` claims an unclaimed Property tile, `ChallengeTile`
+  compares attacker ST vs the defender's effective HP (base HP +
+  `BoardService.GetLandBonusHP` if the creature's era matches the tile's —
+  the first thing to actually exercise that formula) and hands the tile to
+  the winner. Tracks which specific creature defends each claimed tile
+  itself — BoardService stays creature-agnostic (Owner/Level only).
+  Deliberately does NOT do: paying a toll instead of challenging, summon/
+  level-up costs, turn enforcement, or team/alliance awareness — all need
+  EconomyService and/or MatchService, neither of which exist yet. Calls
+  BoardService/CardService through their public APIs directly (layered
+  system on top, same pattern as CardService -> CardData), fires
+  `TileClaimed` / `ChallengeResolved` signals.
+- **`Main.server.lua`** (Script, bootstrap/composition root) — requires
+  BoardService, MovementService, CardService, and BattleService, builds the
+  physical board onto the baseplate from BoardData/EraData, wires their
+  signals to visuals (tile labels/material, defender name+HP on the label,
+  and a per-player ball "Cepter token" that walks the board), and
+  registers/cleans up Cepters on PlayerAdded/PlayerRemoving. Includes
+  **temporary** `/roll`, `/summon <cardId>`, and `/challenge <cardId>` chat
+  commands so movement and battles are testable without real turn input —
+  replace once MatchService/UIService exist.
 
-Not yet built: BattleService (challenge resolution), EconomyService (gold/TM
-tracking, win condition), TerraformService, MatchService (turn order, match
-setup, FFA/2v2 modes), UIService, persistence/DataStore layer.
+Not yet built: EconomyService (gold/TM tracking, win condition, tolls,
+summon/level-up costs), TerraformService, MatchService (turn order, match
+setup, FFA/2v2 modes, team/alliance awareness), UIService, persistence/
+DataStore layer.
 
 ### Planned architecture change: hand-authored boards (not yet built)
 
