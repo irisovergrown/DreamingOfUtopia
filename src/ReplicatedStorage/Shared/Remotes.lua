@@ -22,6 +22,7 @@
 		SummonRequest     client -> server, (cardId: number)
 		ChallengeRequest  client -> server, (cardId: number)
 		PayTollRequest    client -> server, no args
+		EndTurnRequest    client -> server, no args
 		StateUpdated      server -> client, (state: table snapshot)
 		ActionResult      server -> client, (message: string)
 
@@ -39,6 +40,7 @@ local REMOTE_EVENT_NAMES = {
 	"SummonRequest",
 	"ChallengeRequest",
 	"PayTollRequest",
+	"EndTurnRequest",
 	"StateUpdated",
 	"ActionResult",
 }

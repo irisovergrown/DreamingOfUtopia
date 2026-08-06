@@ -18,12 +18,13 @@
 		and a BillboardGui label, just enough to see the board loop and
 		verify Board/Movement/Battle/Economy state changes render.
 
-		Player input/output now goes through ReplicatedStorage.Shared.Remotes
-		to the client HUD (StarterPlayerScripts > UIService) instead of chat
-		commands and the output window — Roll/Summon/Challenge/PayToll
-		requests come in via RemoteEvents below, and state pushes back out
-		via StateUpdated/ActionResult. Still no turn enforcement or team/
-		alliance awareness — that needs MatchService, which doesn't exist yet.
+		Player input/output goes through ReplicatedStorage.Shared.Remotes to
+		the client HUD (StarterPlayerScripts > UIService) — Roll/Summon/
+		Challenge/PayToll/EndTurn requests come in via RemoteEvents below,
+		gated by MatchService.IsPlayersTurn (and HasRolledThisTurn for
+		rolling) before touching Movement/Battle/Economy, and state pushes
+		back out via StateUpdated/ActionResult. Still no 2v2 alliance
+		awareness or a real match-setup lobby — see MatchService's header.
 ]]
 
 local Players = game:GetService("Players")
@@ -39,10 +40,12 @@ local MovementService = require(ServerScriptService.Systems.MovementService)
 local CardService = require(ServerScriptService.Systems.CardService)
 local EconomyService = require(ServerScriptService.Systems.EconomyService)
 local BattleService = require(ServerScriptService.Systems.BattleService)
+local MatchService = require(ServerScriptService.Systems.MatchService)
 
 BoardService.Init()
 EconomyService.Init()
 BattleService.Init()
+MatchService.Init()
 
 local boardFolder = Instance.new("Folder")
 boardFolder.Name = "Board"
@@ -152,6 +155,10 @@ local function buildStateSnapshot(player)
 	local defender = tileId and BattleService.GetDefender(tileId)
 	local defenderCard = defender and CardService.GetCard(defender.CardId)
 
+	local currentTurnPlayer = MatchService.GetCurrentTurnPlayer()
+	local winnerUserId = MatchService.GetWinner()
+	local winnerPlayer = winnerUserId and Players:GetPlayerByUserId(winnerUserId)
+
 	return {
 		Balance = EconomyService.GetBalance(player),
 		TileId = tileId,
@@ -162,6 +169,11 @@ local function buildStateSnapshot(player)
 		DefenderName = defenderCard and defenderCard.Name,
 		DefenderHP = defender and defender.CurrentHP,
 		Toll = (tile and tile.TileType == "Property" and tile.Owner ~= nil) and BoardService.GetToll(tileId) or 0,
+		IsYourTurn = MatchService.IsPlayersTurn(player),
+		CurrentTurnName = currentTurnPlayer and currentTurnPlayer.Name,
+		HasRolled = MatchService.HasRolledThisTurn(),
+		MatchEnded = MatchService.IsMatchEnded(),
+		WinnerName = winnerPlayer and winnerPlayer.Name or (winnerUserId and tostring(winnerUserId)),
 	}
 end
 
@@ -211,6 +223,7 @@ end
 local function onPlayerAdded(player)
 	MovementService.RegisterCepter(player)
 	EconomyService.RegisterPlayer(player)
+	MatchService.RegisterPlayer(player)
 	createCepterToken(player)
 	sendStateToPlayer(player)
 end
@@ -218,11 +231,13 @@ end
 local function onPlayerRemoving(player)
 	MovementService.RemoveCepter(player)
 	EconomyService.RemovePlayer(player)
+	MatchService.RemovePlayer(player)
 	local token = cepterTokens[player.UserId]
 	if token ~= nil then
 		token:Destroy()
 		cepterTokens[player.UserId] = nil
 	end
+	refreshAllPlayerStates()
 end
 
 MovementService.CepterMoved:Connect(function(player, _fromTileId, toTileId)
@@ -251,14 +266,30 @@ end)
 -- Player action requests from the client HUD (StarterPlayerScripts > UIService).
 -- `player` always comes from OnServerEvent's own argument, never from the
 -- client — cannot be spoofed, this is what keeps these calls authoritative.
+-- Every action is gated by MatchService.IsPlayersTurn — Movement/Battle/
+-- Economy stay turn-agnostic themselves, the check lives here.
 Remotes.RollRequest.OnServerEvent:Connect(function(player)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
+	if MatchService.HasRolledThisTurn() then
+		Remotes.ActionResult:FireClient(player, "Already rolled this turn")
+		return
+	end
+
 	local total = MovementService.RollDice(1)
 	print(string.format("[DreamingOfUtopia] %s rolled %d", player.Name, total))
 	Remotes.ActionResult:FireClient(player, string.format("Rolled %d", total))
+	MatchService.MarkRolled()
 	MovementService.MoveCepter(player, total)
 end)
 
 Remotes.SummonRequest.OnServerEvent:Connect(function(player, cardId)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
 	if typeof(cardId) ~= "number" then
 		Remotes.ActionResult:FireClient(player, "Invalid card id")
 		return
@@ -270,6 +301,10 @@ Remotes.SummonRequest.OnServerEvent:Connect(function(player, cardId)
 end)
 
 Remotes.ChallengeRequest.OnServerEvent:Connect(function(player, cardId)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
 	if typeof(cardId) ~= "number" then
 		Remotes.ActionResult:FireClient(player, "Invalid card id")
 		return
@@ -287,17 +322,35 @@ Remotes.ChallengeRequest.OnServerEvent:Connect(function(player, cardId)
 end)
 
 Remotes.PayTollRequest.OnServerEvent:Connect(function(player)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
+
 	local tileId = MovementService.GetCurrentTile(player)
 	local success, reason = EconomyService.PayToll(player, tileId)
 	Remotes.ActionResult:FireClient(player, success and "Toll paid" or ("Pay toll failed: " .. tostring(reason)))
 end)
 
+Remotes.EndTurnRequest.OnServerEvent:Connect(function(player)
+	local success, reason = MatchService.EndTurn(player)
+	Remotes.ActionResult:FireClient(player, success and "Turn ended" or ("End turn failed: " .. tostring(reason)))
+end)
+
 EconomyService.WinTargetReached:Connect(function(userId, balance)
-	print(string.format(
-		"[DreamingOfUtopia] Player %d reached the win target with %d Magic! (MatchService will handle real match end later)",
-		userId,
-		balance
-	))
+	print(string.format("[DreamingOfUtopia] Player %d reached the win target with %d Magic!", userId, balance))
+end)
+
+MatchService.TurnChanged:Connect(function(currentTurnUserId)
+	local currentPlayer = Players:GetPlayerByUserId(currentTurnUserId)
+	print(string.format("[DreamingOfUtopia] Turn changed to %s", currentPlayer and currentPlayer.Name or tostring(currentTurnUserId)))
+	refreshAllPlayerStates()
+end)
+
+MatchService.MatchEnded:Connect(function(winnerUserId)
+	local winnerPlayer = Players:GetPlayerByUserId(winnerUserId)
+	print(string.format("[DreamingOfUtopia] Match ended! Winner: %s", winnerPlayer and winnerPlayer.Name or tostring(winnerUserId)))
+	refreshAllPlayerStates()
 end)
 
 Players.PlayerAdded:Connect(onPlayerAdded)

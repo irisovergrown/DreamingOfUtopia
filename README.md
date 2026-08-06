@@ -47,11 +47,14 @@ already be code — headers are plain `--[[ ]]` comments and paste in fine as-is
 - `Systems/BattleService` — claim/challenge resolution (ST vs effective HP),
   spends Magic Cost via EconomyService, tracks which creature defends each
   claimed tile
+- `Systems/MatchService` — turn order rotation, match-end on win target,
+  FFA-only team stubs for a future 2v2 alliance mode
 - `Shared/Remotes` — client-server RemoteEvent bridge (Roll/Summon/Challenge/
-  PayToll requests, StateUpdated/ActionResult pushes)
+  PayToll/EndTurn requests, StateUpdated/ActionResult pushes)
 - `Main.server.lua` — bootstrap: builds the board on the baseplate, spawns
-  Cepter tokens, wires Board/Movement/Battle/Economy signals to visuals and
-  to per-player state pushes over Remotes, handles the 4 action RemoteEvents
-- `StarterPlayer/UIService.client.lua` — plain monospace HUD (balance, tile
-  info, card-id input, Roll/Summon/Challenge/Pay Toll buttons) replacing the
-  old chat-command test harness
+  Cepter tokens, wires Board/Movement/Battle/Economy/Match signals to
+  visuals and per-player state pushes over Remotes, gates the 5 action
+  RemoteEvents on MatchService's turn checks
+- `StarterPlayer/UIService.client.lua` — plain monospace HUD (turn
+  indicator, balance, tile info, card-id input, Roll/Summon/Challenge/Pay
+  Toll/End Turn buttons, dimmed when it isn't your turn)

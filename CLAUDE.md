@@ -197,17 +197,19 @@ Systems built so far:
   ownership/tolls. Fires `CepterMoved` (per step), `CepterLanded` (move
   finished — the intended hook point for auto-triggering BattleService on
   landing once a real turn UI exists to gather player intent; nothing
-  auto-connects to it yet, `Main.server.lua`'s `/summon` and `/challenge`
-  chat commands drive BattleService manually instead), and `LapCompleted`
-  (passed Start — hook point for the lap bonus once EconomyService exists).
+  auto-connects to it yet, `Main.server.lua`'s `SummonRequest`/
+  `ChallengeRequest` handlers drive BattleService from the client HUD
+  instead), and `LapCompleted` (passed Start — hook point for the lap
+  bonus once EconomyService exists).
 - **`Shared/CardData`** (ModuleScript) — static registry of Creature/Spell/
   Item cards. Small placeholder set (one creature per confirmed era, one
   generic spell, one generic item) — not the real 60-80 card launch
   library, which is still open per the brief.
 - **`Systems/CardService`** (ModuleScript, server) — query API over
   CardData (`GetCard`, `GetAllCards`, `GetCardsByType`, `GetCardsByEra`).
-  Deliberately no hand/deck/unlock state yet — that needs MatchService and
-  a persistence layer, neither of which exist.
+  Deliberately no hand/deck/unlock state yet — that needs MatchService's
+  match setup (not built, see MatchService's own header) and a persistence
+  layer, neither of which exist.
 - **`Systems/EconomyService`** (ModuleScript, server) — each player's Magic
   balance (brief's working-name "Total Magic"/TM). `RegisterPlayer` sets a
   starting balance; `AddMagic`/`SpendMagic` are the general transaction
@@ -231,44 +233,62 @@ Systems built so far:
   claim/challenge never costs Magic. Tracks which specific creature defends
   each claimed tile itself — BoardService stays creature-agnostic (Owner/
   Level only). Deliberately does NOT do: tile-level-up costs, turn
-  enforcement, or team/alliance awareness — all need MatchService, which
-  doesn't exist yet. Calls BoardService/CardService/EconomyService through
-  their public APIs directly (layered system on top, same pattern as
-  CardService -> CardData), fires `TileClaimed` / `ChallengeResolved` signals.
+  enforcement, or team/alliance awareness — all need MatchService (turn
+  enforcement now exists, gated in `Main.server.lua`'s RemoteEvent handlers
+  rather than inside BattleService itself; team/alliance still doesn't).
+  Calls BoardService/CardService/EconomyService through their public APIs
+  directly (layered system on top, same pattern as CardService -> CardData),
+  fires `TileClaimed` / `ChallengeResolved` signals.
+- **`Systems/MatchService`** (ModuleScript, server) — turn order and
+  match-end lifecycle. `RegisterPlayer`/`RemovePlayer` maintain a rotation
+  (array of userIds in join order); `IsPlayersTurn` / `HasRolledThisTurn` /
+  `MarkRolled` / `EndTurn` are the primitives `Main.server.lua` checks
+  before letting a RemoteEvent request through to Movement/Battle/Economy —
+  those systems stay turn-agnostic themselves, the gating lives in Main.
+  Self-subscribes to `EconomyService.WinTargetReached` in `Init` to freeze
+  turns and fire `MatchEnded` with the winner. `GetTeam`/`AreAllies` exist
+  as the seam a real 2v2 alliance flow will use later, but every player is
+  currently their own team (pure FFA) — no pairing logic exists yet.
+  Deliberately does NOT do: match setup/a lobby (there's no "start match"
+  step or minimum player count — the match is implicitly in progress from
+  the first registered player onward, same always-on-world style the rest
+  of the project uses) or rematch/return-to-lobby after `MatchEnded`.
 - **`Shared/Remotes`** (ModuleScript) — the only client-server bridge so
   far. Creates (server) / waits for (client) a fixed set of RemoteEvents
   under `ReplicatedStorage > Remotes`, returned as a name-keyed table so
   both sides reference the same instances instead of magic strings:
   `RollRequest`, `SummonRequest(cardId)`, `ChallengeRequest(cardId)`,
-  `PayTollRequest` (client -> server), `StateUpdated(snapshot)`,
+  `PayTollRequest`, `EndTurnRequest` (client -> server), `StateUpdated(snapshot)`,
   `ActionResult(message)` (server -> client). Request handlers must read
   the acting player from `OnServerEvent`'s own first argument — never a
   client-supplied one — to stay authoritative.
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
   BoardService, MovementService, CardService, EconomyService, BattleService,
-  and Remotes; builds the physical board onto the baseplate from
-  BoardData/EraData; wires signals to visuals (tile labels/material,
+  MatchService, and Remotes; builds the physical board onto the baseplate
+  from BoardData/EraData; wires signals to visuals (tile labels/material,
   defender name+HP on the label, a per-player ball "Cepter token" that
-  walks the board); registers/cleans up Cepters and Magic balances on
-  PlayerAdded/PlayerRemoving. Player input/output now goes through Remotes
-  to the client HUD instead of chat commands/output-window checking: the 4
-  `*Request` RemoteEvents are handled here (calling the same services the
-  old chat commands did) and `sendStateToPlayer`/`refreshAllPlayerStates`
-  push a per-player state snapshot over `StateUpdated` whenever anything
-  relevant changes (movement, balance, tile ownership/level).
+  walks the board); registers/cleans up Cepters, Magic balances, and turn
+  rotation on PlayerAdded/PlayerRemoving. The 5 `*Request` RemoteEvents are
+  handled here, each gated by `MatchService.IsPlayersTurn` (roll also
+  checks `HasRolledThisTurn`) before calling into Movement/Battle/Economy —
+  `sendStateToPlayer`/`refreshAllPlayerStates` push a per-player state
+  snapshot (including turn/match info) over `StateUpdated` whenever
+  anything relevant changes (movement, balance, tile ownership/level, turn,
+  match end).
 - **`StarterPlayer/UIService.client.lua`** (LocalScript) — first slice of
   UIService: a plain monospace "terminal" HUD (`ScreenGui`/`Frame`, no card
-  art or animation) with a Magic balance line, current-tile info, a card-id
-  `TextBox`, and Roll/Summon/Challenge/Pay Toll buttons that fire the
-  matching Remote. Reads `CardData`/`EraData` directly for a card-id legend
+  art or animation) with a turn indicator, Magic balance line, current-tile
+  info, a card-id `TextBox`, and Roll/Summon/Challenge/Pay Toll/End Turn
+  buttons that fire the matching Remote. Action buttons dim when it isn't
+  the local player's turn (visual cue only — the server is the actual
+  enforcement). Reads `CardData`/`EraData` directly for a card-id legend
   (safe — pure static Shared data, no security concern). Only talks to the
   server through `Shared.Remotes`; cannot and does not require server
   ModuleScripts.
 
-Not yet built: TerraformService, MatchService (turn order, match setup,
-FFA/2v2 modes, team/alliance awareness, actually ending a match on
-`EconomyService.WinTargetReached`), persistence/DataStore layer, and the
-rest of UIService (card hand, deck builder, turn indicator).
+Not yet built: TerraformService, match setup/lobby and 2v2 alliance mode
+(see MatchService's header for what's deferred there), persistence/
+DataStore layer, and the rest of UIService (card hand, deck builder).
 
 ### Planned architecture change: hand-authored boards (not yet built)
 

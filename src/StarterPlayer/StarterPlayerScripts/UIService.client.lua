@@ -20,8 +20,13 @@
 		are Shared (ReplicatedStorage), so this reads them directly for the
 		card legend — pure static data, no security concern.
 
+		Turn indicator + End Turn button reflect MatchService's turn state
+		(pushed via StateUpdated) — action buttons dim when it isn't your
+		turn, though they're still clickable; the server is what actually
+		enforces turn order, this is just a visual cue.
+
 	Server contract (see ReplicatedStorage > Shared > Remotes):
-		Client -> Server: RollRequest, SummonRequest(cardId), ChallengeRequest(cardId), PayTollRequest
+		Client -> Server: RollRequest, SummonRequest(cardId), ChallengeRequest(cardId), PayTollRequest, EndTurnRequest
 		Server -> Client: StateUpdated(snapshot), ActionResult(message)
 ]]
 
@@ -41,7 +46,7 @@ screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
 frame.Name = "Panel"
-frame.Size = UDim2.fromOffset(340, 340)
+frame.Size = UDim2.fromOffset(400, 380)
 frame.Position = UDim2.fromOffset(20, 20)
 frame.BackgroundColor3 = Color3.new(0, 0, 0)
 frame.BackgroundTransparency = 0.15
@@ -82,13 +87,14 @@ local function createLabel(name, layoutOrder, height, textSize)
 	return label
 end
 
-local balanceLabel = createLabel("BalanceLabel", 1, 20, 18)
-local tileLabel = createLabel("TileLabel", 2, 60, 14)
-local legendLabel = createLabel("LegendLabel", 3, 100, 12)
+local turnLabel = createLabel("TurnLabel", 1, 20, 16)
+local balanceLabel = createLabel("BalanceLabel", 2, 20, 18)
+local tileLabel = createLabel("TileLabel", 3, 60, 14)
+local legendLabel = createLabel("LegendLabel", 4, 100, 12)
 
 local cardIdBox = Instance.new("TextBox")
 cardIdBox.Name = "CardIdBox"
-cardIdBox.LayoutOrder = 4
+cardIdBox.LayoutOrder = 5
 cardIdBox.Size = UDim2.new(1, 0, 0, 26)
 cardIdBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 cardIdBox.TextColor3 = Color3.fromRGB(180, 255, 210)
@@ -101,7 +107,7 @@ cardIdBox.Parent = frame
 
 local buttonRow = Instance.new("Frame")
 buttonRow.Name = "ButtonRow"
-buttonRow.LayoutOrder = 5
+buttonRow.LayoutOrder = 6
 buttonRow.Size = UDim2.new(1, 0, 0, 28)
 buttonRow.BackgroundTransparency = 1
 buttonRow.Parent = frame
@@ -115,11 +121,11 @@ local function createButton(name, text, layoutOrder)
 	local button = Instance.new("TextButton")
 	button.Name = name
 	button.LayoutOrder = layoutOrder
-	button.Size = UDim2.fromOffset(76, 28)
+	button.Size = UDim2.fromOffset(68, 28)
 	button.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 	button.TextColor3 = Color3.fromRGB(180, 255, 210)
 	button.Font = Enum.Font.Code
-	button.TextSize = 14
+	button.TextSize = 13
 	button.Text = text
 	button.Parent = buttonRow
 	return button
@@ -129,8 +135,9 @@ local rollButton = createButton("RollButton", "Roll", 1)
 local summonButton = createButton("SummonButton", "Summon", 2)
 local challengeButton = createButton("ChallengeButton", "Challenge", 3)
 local payTollButton = createButton("PayTollButton", "Pay Toll", 4)
+local endTurnButton = createButton("EndTurnButton", "End Turn", 5)
 
-local resultLabel = createLabel("ResultLabel", 6, 60, 14)
+local resultLabel = createLabel("ResultLabel", 7, 60, 14)
 
 local legendLines = {}
 for _, card in ipairs(CardData.Cards) do
@@ -176,6 +183,10 @@ payTollButton.Activated:Connect(function()
 	Remotes.PayTollRequest:FireServer()
 end)
 
+endTurnButton.Activated:Connect(function()
+	Remotes.EndTurnRequest:FireServer()
+end)
+
 local function formatTileText(state)
 	if state.TileId == nil then
 		return "Tile: —"
@@ -199,9 +210,32 @@ local function formatTileText(state)
 	return table.concat(lines, "\n")
 end
 
+local function formatTurnText(state)
+	if state.MatchEnded then
+		return string.format("MATCH OVER — Winner: %s", state.WinnerName or "?")
+	end
+	if state.IsYourTurn then
+		return string.format("YOUR TURN%s", state.HasRolled and " (rolled)" or "")
+	end
+	return string.format("Turn: %s", state.CurrentTurnName or "?")
+end
+
+local ACTIVE_BUTTON_COLOR = Color3.fromRGB(180, 255, 210)
+local DIM_BUTTON_COLOR = Color3.fromRGB(90, 100, 95)
+
 Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 	balanceLabel.Text = string.format("MAGIC: %d", state.Balance or 0)
 	tileLabel.Text = formatTileText(state)
+	turnLabel.Text = formatTurnText(state)
+
+	-- Visual cue only — the server is what actually enforces turn order,
+	-- these buttons stay clickable and just get rejected via ActionResult.
+	local buttonColor = state.IsYourTurn and ACTIVE_BUTTON_COLOR or DIM_BUTTON_COLOR
+	rollButton.TextColor3 = buttonColor
+	summonButton.TextColor3 = buttonColor
+	challengeButton.TextColor3 = buttonColor
+	payTollButton.TextColor3 = buttonColor
+	endTurnButton.TextColor3 = buttonColor
 end)
 
 Remotes.ActionResult.OnClientEvent:Connect(function(message)
