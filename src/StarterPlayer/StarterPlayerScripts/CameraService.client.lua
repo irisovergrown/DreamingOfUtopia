@@ -32,9 +32,16 @@
 		UIService HUD), so nothing is lost by not using the default
 		follow-avatar camera. Player characters/avatars are untouched;
 		only the camera is hijacked.
+
+		Roblox can swap in a brand-new Camera instance under
+		Workspace.CurrentCamera around character spawn — a reference grabbed
+		once at script start can go stale, silently leaving the *new*
+		camera in default follow mode while this script keeps driving the
+		old, no-longer-active one. So `camera` is re-acquired (and
+		re-forced Scriptable) every time Workspace.CurrentCamera changes,
+		not just once at startup.
 ]]
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
@@ -46,12 +53,19 @@ local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local CAMERA_OFFSET = Vector3.new(0, 22, 20)
 local PAN_TIME = 0.6
 
-local camera = Workspace.CurrentCamera
-camera.CameraType = Enum.CameraType.Scriptable
-
+local camera = nil
 local currentTween = nil
 local currentPositionConnection = nil
 local lastTurnUserId = nil
+
+local function claimCamera()
+	camera = Workspace.CurrentCamera
+	camera.CameraType = Enum.CameraType.Scriptable
+end
+
+claimCamera()
+Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(claimCamera)
+print("[DreamingOfUtopia] CameraService active")
 
 local function focusOn(targetPosition, instant)
 	local goalCFrame = CFrame.lookAt(targetPosition + CAMERA_OFFSET, targetPosition)
@@ -99,9 +113,11 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 
 	local token = Workspace:FindFirstChild("Cepter_" .. turnUserId, true)
 	if token == nil then
+		warn("[DreamingOfUtopia] CameraService: no Cepter token found for turn user " .. turnUserId)
 		return
 	end
 
+	print("[DreamingOfUtopia] CameraService focusing on Cepter_" .. turnUserId)
 	trackToken(token)
 	focusOn(token.Position, false)
 end)
