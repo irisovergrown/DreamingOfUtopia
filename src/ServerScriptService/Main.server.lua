@@ -188,6 +188,16 @@ local function findSummonModel(cardId)
 	return nil
 end
 
+-- GetBoundingBox only exists on Model, not BasePart — a single Part's own
+-- Size is already the height we need, no bounding-box math required.
+local function getInstanceHeight(instance)
+	if instance:IsA("BasePart") then
+		return instance.Size.Y
+	end
+	local _, size = instance:GetBoundingBox()
+	return size.Y
+end
+
 -- tileId -> the cloned creature instance (Model or Part) marking that
 -- tile's defender.
 local defenderMarkers = {}
@@ -219,9 +229,7 @@ local function updateDefenderMarker(tileId, newOwnerUserId)
 	marker.Name = "Defender_" .. tileId
 	anchorAllParts(marker)
 	marker.Parent = defenderFolder
-
-	local _, size = marker:GetBoundingBox()
-	marker:PivotTo(CFrame.new(getTileWorldPosition(tileId, size.Y / 2)))
+	marker:PivotTo(CFrame.new(getTileWorldPosition(tileId, getInstanceHeight(marker) / 2)))
 
 	defenderMarkers[tileId] = marker
 end
