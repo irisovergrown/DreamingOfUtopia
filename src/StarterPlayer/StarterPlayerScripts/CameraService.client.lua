@@ -40,6 +40,12 @@
 		old, no-longer-active one. So `camera` is re-acquired (and
 		re-forced Scriptable) every time Workspace.CurrentCamera changes,
 		not just once at startup.
+
+		Token lookup uses WaitForChild (with a timeout), not a one-shot
+		FindFirstChild — the server fires StateUpdated right after creating
+		a new Cepter token, but instance replication and RemoteEvent
+		delivery aren't guaranteed to arrive in that order, so the token
+		can genuinely not exist on the client yet for a brief moment.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -66,6 +72,11 @@ end
 claimCamera()
 Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(claimCamera)
 print("[DreamingOfUtopia] CameraService active")
+
+local cepterFolder = Workspace:WaitForChild("Cepters", 10)
+if cepterFolder == nil then
+	warn("[DreamingOfUtopia] CameraService: Workspace.Cepters folder never appeared")
+end
 
 local function focusOn(targetPosition, instant)
 	local goalCFrame = CFrame.lookAt(targetPosition + CAMERA_OFFSET, targetPosition)
@@ -111,7 +122,11 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 	end
 	lastTurnUserId = turnUserId
 
-	local token = Workspace:FindFirstChild("Cepter_" .. turnUserId, true)
+	if cepterFolder == nil then
+		return
+	end
+
+	local token = cepterFolder:WaitForChild("Cepter_" .. turnUserId, 5)
 	if token == nil then
 		warn("[DreamingOfUtopia] CameraService: no Cepter token found for turn user " .. turnUserId)
 		return
