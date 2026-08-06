@@ -12,8 +12,12 @@
 		script does NOT spawn tiles, it just finds the ones already there
 		and attaches a BillboardGui label to each. Also registers each
 		joining player with MovementService (board position) and
-		EconomyService (Magic balance), and gives them a simple ball
-		"Cepter token" that walks the board on move.
+		EconomyService (Magic balance), and gives them a basic R6-shaped
+		stand-in rig (Torso/Head/Arms/Legs, plain blocks — a placeholder,
+		not final character art) that walks the board on move. Also spawns
+		a simple placeholder marker on a tile whenever a creature defends
+		it, so a claimed tile visibly has "something" guarding it instead
+		of just a label.
 		This is the wiring layer — it requires systems and connects their
 		Signals, but game systems still never require each other directly.
 
@@ -54,11 +58,35 @@ BattleService.Init()
 MatchService.Init()
 
 local TILE_TAG = "Tile"
-local CEPTER_TOKEN_RADIUS = 1.5
+
+-- Basic R6-shaped stand-in rig: plain blocks, no mesh/art assets. Offsets
+-- are relative to the Torso's own center; the Torso is the named
+-- "Cepter_"..userId part everything else (CameraService included) looks
+-- up, so those offsets are also how the other parts get repositioned
+-- whenever the rig moves. ROOT_HEIGHT is how far above the tile surface
+-- the Torso center sits, chosen so the Legs (the lowest parts) rest on it.
+local RIG_PART_DEFS = {
+	{ Name = "Torso", Shape = Enum.PartType.Block, Size = Vector3.new(2, 2, 1), Offset = Vector3.new(0, 0, 0) },
+	{ Name = "Head", Shape = Enum.PartType.Ball, Size = Vector3.new(1.2, 1.2, 1.2), Offset = Vector3.new(0, 1.6, 0) },
+	{ Name = "Left Arm", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(-1.5, 0, 0) },
+	{ Name = "Right Arm", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(1.5, 0, 0) },
+	{ Name = "Left Leg", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(-0.5, -2, 0) },
+	{ Name = "Right Leg", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(0.5, -2, 0) },
+}
+local RIG_ROOT_HEIGHT = 3
+
+-- Simple placeholder marker for whichever creature is defending a tile —
+-- a single colored block, not final creature art. Sized/positioned so it
+-- rests on the tile surface, same convention as the Cepter rig.
+local DEFENDER_MARKER_SIZE = Vector3.new(2.5, 4, 2.5)
 
 local cepterFolder = Instance.new("Folder")
 cepterFolder.Name = "Cepters"
 cepterFolder.Parent = Workspace
+
+local defenderFolder = Instance.new("Folder")
+defenderFolder.Name = "Defenders"
+defenderFolder.Parent = Workspace
 
 -- tileId -> Part, built from the same "Tile" tag BoardService itself scans.
 -- Kept separate from BoardService on purpose — it stays instance-agnostic
@@ -108,6 +136,39 @@ local function getTileWorldPosition(tileId, radius)
 		return Vector3.new(0, radius, 0)
 	end
 	return part.Position + Vector3.new(0, part.Size.Y / 2 + radius, 0)
+end
+
+-- tileId -> the placeholder Part marking that tile's defending creature.
+local defenderMarkers = {}
+
+local function updateDefenderMarker(tileId, newOwnerUserId)
+	local existing = defenderMarkers[tileId]
+	if existing ~= nil then
+		existing:Destroy()
+		defenderMarkers[tileId] = nil
+	end
+
+	if newOwnerUserId == nil then
+		return
+	end
+
+	local defender = BattleService.GetDefender(tileId)
+	local card = defender and CardService.GetCard(defender.CardId)
+	if card == nil then
+		return
+	end
+
+	local marker = Instance.new("Part")
+	marker.Name = "Defender_" .. tileId
+	marker.Anchored = true
+	marker.CanCollide = false
+	marker.Size = DEFENDER_MARKER_SIZE
+	marker.Color = EraData.GetEra(card.Era).Color
+	marker.Material = Enum.Material.Neon
+	marker.Position = getTileWorldPosition(tileId, DEFENDER_MARKER_SIZE.Y / 2)
+	marker.Parent = defenderFolder
+
+	defenderMarkers[tileId] = marker
 end
 
 local function refreshTileLabel(tileId)
@@ -189,6 +250,7 @@ BoardService.TileOwnerChanged:Connect(function(tileId, newOwnerUserId)
 		part.Material = newOwnerUserId and Enum.Material.Neon or Enum.Material.SmoothPlastic
 	end
 	refreshTileLabel(tileId)
+	updateDefenderMarker(tileId, newOwnerUserId)
 	refreshAllPlayerStates()
 end)
 
@@ -206,21 +268,53 @@ BoardService.EraChanged:Connect(function(tileId, newEra)
 	refreshAllPlayerStates()
 end)
 
--- Cepter tokens: one ball per player, walking the board as MovementService moves them.
+-- Cepter tokens: one basic R6-shaped stand-in rig per player, walking the
+-- board as MovementService moves them. `cepterTokens` holds each player's
+-- named Torso part (the one CameraService and everything else looks up as
+-- "Cepter_"..userId); `cepterRigParts` holds the rest of that rig (Head/
+-- Arms/Legs) so movement can reposition them all in lockstep.
 local cepterTokens = {}
+local cepterRigParts = {}
 
 local function createCepterToken(player)
-	local token = Instance.new("Part")
-	token.Name = "Cepter_" .. player.UserId
-	token.Shape = Enum.PartType.Ball
-	token.Size = Vector3.new(3, 3, 3)
-	token.Anchored = true
-	token.CanCollide = false
-	token.Color = BrickColor.Random().Color
-	token.Position = getTileWorldPosition(MovementService.GetCurrentTile(player), CEPTER_TOKEN_RADIUS)
-	token.Parent = cepterFolder
+	local color = BrickColor.Random().Color
+	local basePosition = getTileWorldPosition(MovementService.GetCurrentTile(player), RIG_ROOT_HEIGHT)
+	local extraParts = {}
 
-	cepterTokens[player.UserId] = token
+	for _, def in ipairs(RIG_PART_DEFS) do
+		local part = Instance.new("Part")
+		part.Shape = def.Shape
+		part.Size = def.Size
+		part.Anchored = true
+		part.CanCollide = false
+		part.Color = color
+		part.Position = basePosition + def.Offset
+		part.Parent = cepterFolder
+
+		if def.Name == "Torso" then
+			part.Name = "Cepter_" .. player.UserId
+			cepterTokens[player.UserId] = part
+		else
+			part.Name = def.Name
+			table.insert(extraParts, { Part = part, Offset = def.Offset })
+		end
+	end
+
+	cepterRigParts[player.UserId] = extraParts
+end
+
+local function moveCepterRig(player, tileId)
+	local torso = cepterTokens[player.UserId]
+	if torso == nil then
+		return
+	end
+
+	local basePosition = getTileWorldPosition(tileId, RIG_ROOT_HEIGHT)
+	torso.Position = basePosition
+
+	for _, entry in ipairs(cepterRigParts[player.UserId] or {}) do
+		entry.Part.Position = basePosition + entry.Offset
+	end
 end
 
 local function onPlayerAdded(player)
@@ -240,14 +334,15 @@ local function onPlayerRemoving(player)
 		token:Destroy()
 		cepterTokens[player.UserId] = nil
 	end
+	for _, entry in ipairs(cepterRigParts[player.UserId] or {}) do
+		entry.Part:Destroy()
+	end
+	cepterRigParts[player.UserId] = nil
 	refreshAllPlayerStates()
 end
 
 MovementService.CepterMoved:Connect(function(player, _fromTileId, toTileId)
-	local token = cepterTokens[player.UserId]
-	if token ~= nil then
-		token.Position = getTileWorldPosition(toTileId, CEPTER_TOKEN_RADIUS)
-	end
+	moveCepterRig(player, toTileId)
 	sendStateToPlayer(player)
 end)
 

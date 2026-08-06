@@ -82,8 +82,9 @@ in-fiction studio banner "Ninth Signal."
   artists/modelers
 - PvP matchmaking: public queues, ranked/casual, and private servers — all
   planned
-- Player board piece ("Cepter token," currently a placeholder ball spawned
-  by `Main.server.lua`) will be a custom character/piece model, not the
+- Player board piece ("Cepter token," currently a basic R6-shaped stand-in
+  rig — plain blocks, spawned by `Main.server.lua`, see "Systems built so
+  far" below) will eventually be a custom character/piece model, not the
   default Roblox avatar. This model is itself a cosmetic slot under the
   existing cosmetic-Robux-purchases monetization decision.
 - Camera is match-wide and turn-synced, Culdcept Saga style: a single
@@ -301,25 +302,35 @@ Systems built so far:
   instance-agnostic/pure data, this is a visual-only concern) to find the
   hand-placed tile Parts and attach a BillboardGui label to each; wires
   signals to visuals (label text, ownership Material flip to Neon, era
-  recolor, a per-player ball "Cepter token" parented under a `Cepters`
-  folder that walks the board using each tile Part's own `.Position`);
-  registers/cleans up Cepters, Magic balances, and turn rotation on
-  PlayerAdded/PlayerRemoving. `warn()`s if no tagged tiles are found at
-  boot (helps catch a forgotten tag/attribute during hand-authoring). The 6
-  `*Request` RemoteEvents are handled here, each gated by
-  `MatchService.IsPlayersTurn` (roll also checks `HasRolledThisTurn`)
-  before calling into Movement/Battle/Economy/Terraform —
-  `sendStateToPlayer`/`refreshAllPlayerStates` push a per-player state
-  snapshot (including turn/match info, and the current turn's userId for
-  CameraService) over `StateUpdated` whenever anything relevant changes
-  (movement, balance, tile ownership/level/era, turn, match end).
+  recolor, a per-player basic R6-shaped stand-in rig "Cepter token" —
+  Torso/Head/Arms/Legs as plain colored blocks, not final character art —
+  parented under a `Cepters` folder that walks the board using each tile
+  Part's own `.Position`; the Torso is the named `"Cepter_"..userId` part
+  everything else, CameraService included, looks up, the other rig parts
+  are repositioned in lockstep from stored offsets whenever it moves). Also
+  spawns a single colored `Neon` block per claimed tile under a `Defenders`
+  folder as a placeholder marker for whichever creature defends it (colored
+  by that creature's era), driven by the same `TileOwnerChanged` signal —
+  not real creature art, just "something is here." Registers/cleans up
+  Cepters, Magic balances, and turn rotation on PlayerAdded/PlayerRemoving.
+  `warn()`s if no tagged tiles are found at boot (helps catch a forgotten
+  tag/attribute during hand-authoring). The 6 `*Request` RemoteEvents are
+  handled here, each gated by `MatchService.IsPlayersTurn` (roll also
+  checks `HasRolledThisTurn`) before calling into
+  Movement/Battle/Economy/Terraform — `sendStateToPlayer`/
+  `refreshAllPlayerStates` push a per-player state snapshot (including
+  turn/match info, and the current turn's userId for CameraService) over
+  `StateUpdated` whenever anything relevant changes (movement, balance,
+  tile ownership/level/era, turn, match end).
 - **`StarterPlayer/UIService.client.lua`** (LocalScript) — first slice of
-  UIService: a plain monospace "terminal" HUD (`ScreenGui`/`Frame`, no card
-  art or animation) with a turn indicator, Magic balance line, current-tile
-  info, a card-id `TextBox`, an era-id `TextBox` (raw `EraData.Eras` keys,
-  listed in the legend), and Roll/Summon/Challenge/Pay Toll/End Turn/
-  Terraform buttons that fire the matching Remote. Action buttons dim when
-  it isn't the local player's turn (visual cue only — the server is the
+  UIService: a deliberately plain HUD (`ScreenGui`/`Frame`, standard Roblox
+  gray panel, default `SourceSans` font, no custom color theme, no card art
+  or animation — kept intentionally undecorated rather than styled) with a
+  turn indicator, Magic balance line, current-tile info, a card-id
+  `TextBox`, an era-id `TextBox` (raw `EraData.Eras` keys, listed in the
+  legend), and Roll/Summon/Challenge/Pay Toll/End Turn/Terraform buttons
+  that fire the matching Remote. Action button text dims to gray when it
+  isn't the local player's turn (visual cue only — the server is the
   actual enforcement). Reads `CardData`/`EraData` directly for the legend
   (safe — pure static Shared data, no security concern). Only talks to the
   server through `Shared.Remotes`; cannot and does not require server
@@ -356,8 +367,10 @@ Systems built so far:
 
 Not yet built: match setup/lobby and 2v2 alliance mode (see MatchService's
 header for what's deferred there), persistence/DataStore layer, terraforming
-an owned tile (see TerraformService's header), custom Cepter token model
-(still a plain ball), and the rest of UIService (card hand, deck builder).
+an owned tile (see TerraformService's header), final Cepter token/creature
+art (both are still plain-block placeholders — R6 stand-in rig and a single
+colored marker, respectively), and the rest of UIService (card hand, deck
+builder, actual visual design).
 
 ## Working style — how to respond (manual copy-paste sessions)
 

@@ -5,14 +5,15 @@
 		StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
 
 	Purpose:
-		Plain monospace "terminal" HUD replacing the temporary /roll
-		/summon /challenge /paytoll chat commands with buttons, and
-		replacing "check the server output window" with an on-screen
-		balance/tile readout and action-result line. Deliberately not
-		fancy — no card art, no animations, just readable text and a
-		handful of buttons. A real UIService (card hand, deck builder,
-		turn indicator) replaces this once more systems (MatchService
-		especially) exist to give it more to show.
+		Plain HUD (standard Roblox gray panel, default font, no theming)
+		replacing the temporary /roll /summon /challenge /paytoll chat
+		commands with buttons, and replacing "check the server output
+		window" with an on-screen balance/tile readout and action-result
+		line. Deliberately plain on purpose — no card art, no animations,
+		no custom color theme, just default-looking labels/boxes/buttons.
+		A real UIService (card hand, deck builder, actual visual design)
+		replaces this once more systems (MatchService especially) exist to
+		give it more to show.
 
 		Talks to the server only through ReplicatedStorage.Shared.Remotes —
 		never requires server ModuleScripts directly (can't; they live in
@@ -49,19 +50,20 @@ screenGui.Name = "UIServiceHud"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
+local FONT = Enum.Font.SourceSans
+local TEXT_COLOR = Color3.fromRGB(0, 0, 0)
+local DIM_TEXT_COLOR = Color3.fromRGB(140, 140, 140)
+local PANEL_COLOR = Color3.fromRGB(242, 242, 242)
+local INPUT_COLOR = Color3.fromRGB(255, 255, 255)
+local BUTTON_COLOR = Color3.fromRGB(225, 225, 225)
+
 local frame = Instance.new("Frame")
 frame.Name = "Panel"
 frame.Size = UDim2.fromOffset(400, 440)
 frame.Position = UDim2.fromOffset(20, 20)
-frame.BackgroundColor3 = Color3.new(0, 0, 0)
-frame.BackgroundTransparency = 0.15
-frame.BorderSizePixel = 0
+frame.BackgroundColor3 = PANEL_COLOR
+frame.BorderSizePixel = 1
 frame.Parent = screenGui
-
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(90, 255, 160)
-stroke.Thickness = 1
-stroke.Parent = frame
 
 local padding = Instance.new("UIPadding")
 padding.PaddingTop = UDim.new(0, 8)
@@ -81,9 +83,9 @@ local function createLabel(name, layoutOrder, height, textSize)
 	label.LayoutOrder = layoutOrder
 	label.Size = UDim2.new(1, 0, 0, height)
 	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.Code
+	label.Font = FONT
 	label.TextSize = textSize
-	label.TextColor3 = Color3.fromRGB(180, 255, 210)
+	label.TextColor3 = TEXT_COLOR
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Top
 	label.TextWrapped = true
@@ -101,9 +103,9 @@ local cardIdBox = Instance.new("TextBox")
 cardIdBox.Name = "CardIdBox"
 cardIdBox.LayoutOrder = 5
 cardIdBox.Size = UDim2.new(1, 0, 0, 26)
-cardIdBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-cardIdBox.TextColor3 = Color3.fromRGB(180, 255, 210)
-cardIdBox.Font = Enum.Font.Code
+cardIdBox.BackgroundColor3 = INPUT_COLOR
+cardIdBox.TextColor3 = TEXT_COLOR
+cardIdBox.Font = FONT
 cardIdBox.TextSize = 14
 cardIdBox.PlaceholderText = "card id"
 cardIdBox.Text = ""
@@ -127,9 +129,9 @@ local function createButton(name, text, layoutOrder)
 	button.Name = name
 	button.LayoutOrder = layoutOrder
 	button.Size = UDim2.fromOffset(68, 28)
-	button.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-	button.TextColor3 = Color3.fromRGB(180, 255, 210)
-	button.Font = Enum.Font.Code
+	button.BackgroundColor3 = BUTTON_COLOR
+	button.TextColor3 = TEXT_COLOR
+	button.Font = FONT
 	button.TextSize = 13
 	button.Text = text
 	button.Parent = buttonRow
@@ -146,9 +148,9 @@ local eraBox = Instance.new("TextBox")
 eraBox.Name = "EraBox"
 eraBox.LayoutOrder = 7
 eraBox.Size = UDim2.new(1, 0, 0, 26)
-eraBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-eraBox.TextColor3 = Color3.fromRGB(180, 255, 210)
-eraBox.Font = Enum.Font.Code
+eraBox.BackgroundColor3 = INPUT_COLOR
+eraBox.TextColor3 = TEXT_COLOR
+eraBox.Font = FONT
 eraBox.TextSize = 14
 eraBox.PlaceholderText = "terraform era id (blank = neutral)"
 eraBox.Text = ""
@@ -159,9 +161,9 @@ local terraformButton = Instance.new("TextButton")
 terraformButton.Name = "TerraformButton"
 terraformButton.LayoutOrder = 8
 terraformButton.Size = UDim2.new(1, 0, 0, 28)
-terraformButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-terraformButton.TextColor3 = Color3.fromRGB(180, 255, 210)
-terraformButton.Font = Enum.Font.Code
+terraformButton.BackgroundColor3 = BUTTON_COLOR
+terraformButton.TextColor3 = TEXT_COLOR
+terraformButton.Font = FONT
 terraformButton.TextSize = 13
 terraformButton.Text = "Terraform"
 terraformButton.Parent = frame
@@ -192,7 +194,7 @@ legendLabel.Text = table.concat(legendLines, "\n")
 local function getCardIdInput()
 	local cardId = tonumber(cardIdBox.Text)
 	if cardId == nil then
-		resultLabel.Text = "> enter a card id first"
+		resultLabel.Text = "Enter a card id first"
 	end
 	return cardId
 end
@@ -252,25 +254,22 @@ end
 
 local function formatTurnText(state)
 	if state.MatchEnded then
-		return string.format("MATCH OVER — Winner: %s", state.WinnerName or "?")
+		return string.format("Match over — Winner: %s", state.WinnerName or "?")
 	end
 	if state.IsYourTurn then
-		return string.format("YOUR TURN%s", state.HasRolled and " (rolled)" or "")
+		return string.format("Your turn%s", state.HasRolled and " (rolled)" or "")
 	end
 	return string.format("Turn: %s", state.CurrentTurnName or "?")
 end
 
-local ACTIVE_BUTTON_COLOR = Color3.fromRGB(180, 255, 210)
-local DIM_BUTTON_COLOR = Color3.fromRGB(90, 100, 95)
-
 Remotes.StateUpdated.OnClientEvent:Connect(function(state)
-	balanceLabel.Text = string.format("MAGIC: %d", state.Balance or 0)
+	balanceLabel.Text = string.format("Magic: %d", state.Balance or 0)
 	tileLabel.Text = formatTileText(state)
 	turnLabel.Text = formatTurnText(state)
 
 	-- Visual cue only — the server is what actually enforces turn order,
 	-- these buttons stay clickable and just get rejected via ActionResult.
-	local buttonColor = state.IsYourTurn and ACTIVE_BUTTON_COLOR or DIM_BUTTON_COLOR
+	local buttonColor = state.IsYourTurn and TEXT_COLOR or DIM_TEXT_COLOR
 	rollButton.TextColor3 = buttonColor
 	summonButton.TextColor3 = buttonColor
 	challengeButton.TextColor3 = buttonColor
@@ -280,5 +279,5 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 end)
 
 Remotes.ActionResult.OnClientEvent:Connect(function(message)
-	resultLabel.Text = "> " .. tostring(message)
+	resultLabel.Text = tostring(message)
 end)

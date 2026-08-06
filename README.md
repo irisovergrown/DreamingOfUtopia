@@ -72,13 +72,15 @@ Command Bar for a working starting layout to edit from.
 - `Shared/Remotes` — client-server RemoteEvent bridge (Roll/Summon/Challenge/
   PayToll/EndTurn/Terraform requests, StateUpdated/ActionResult pushes)
 - `Main.server.lua` — bootstrap: finds hand-placed tiles (doesn't spawn
-  them), spawns Cepter tokens, wires Board/Movement/Battle/Economy/Match
-  signals to visuals and per-player state pushes over Remotes, gates the 6
-  action RemoteEvents on MatchService's turn checks
-- `StarterPlayer/UIService.client.lua` — plain monospace HUD (turn
-  indicator, balance, tile info, card-id + era-id inputs,
-  Roll/Summon/Challenge/Pay Toll/End Turn/Terraform buttons, dimmed when
-  it isn't your turn)
+  them), spawns a basic R6-shaped stand-in rig per player (plain blocks,
+  not final art) and a single colored marker per claimed tile for its
+  defending creature, wires Board/Movement/Battle/Economy/Match signals to
+  visuals and per-player state pushes over Remotes, gates the 6 action
+  RemoteEvents on MatchService's turn checks
+- `StarterPlayer/UIService.client.lua` — deliberately plain HUD (standard
+  Roblox gray panel, default font, no color theme — turn indicator,
+  balance, tile info, card-id + era-id inputs, Roll/Summon/Challenge/Pay
+  Toll/End Turn/Terraform buttons, dimmed when it isn't your turn)
 - `StarterPlayer/CameraService.client.lua` — match-wide, turn-synced stage
   camera; snaps to and follows whichever player currently has the turn,
   same framing for everyone, computed independently per-client from synced
