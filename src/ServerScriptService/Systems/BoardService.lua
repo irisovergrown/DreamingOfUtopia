@@ -24,6 +24,7 @@
 		BoardService.GetAllTiles() -> array of table snapshots
 		BoardService.SetOwner(tileId, player)         -- player or nil to clear
 		BoardService.LevelUp(tileId)      -> newLevel or nil if already max
+		BoardService.SetEra(tileId, era)              -- era or nil for neutral
 		BoardService.GetChainMultiplier(userId, era)
 		BoardService.GetTileValue(tileId)
 		BoardService.GetToll(tileId)
@@ -32,6 +33,7 @@
 	Signals (ReplicatedStorage.Shared.Signal instances):
 		BoardService.TileOwnerChanged:Connect(function(tileId, newOwnerUserId) end)
 		BoardService.TileLeveledUp:Connect(function(tileId, newLevel) end)
+		BoardService.EraChanged:Connect(function(tileId, newEra) end)
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -43,6 +45,7 @@ local BoardService = {}
 
 BoardService.TileOwnerChanged = Signal.new()
 BoardService.TileLeveledUp = Signal.new()
+BoardService.EraChanged = Signal.new()
 
 local MAX_TILE_LEVEL = 5
 
@@ -55,7 +58,10 @@ local CHAIN_BONUS_PER_EXTRA_TILE = 0.5
 -- +10 HP per tile level for a matching-era creature landing on its own tile.
 local LAND_BONUS_HP_PER_LEVEL = 10
 
--- tileId -> { Owner = userId or nil, Level = number }
+-- tileId -> { Owner = userId or nil, Level = number, Era = era id or nil }
+-- Era starts as a copy of BoardData's static era but is mutable from here on
+-- (TerraformService changes it) — GetTile and every internal formula below
+-- read Era from here, never from BoardData.Tiles directly.
 local _tileState = {}
 
 local function getUserId(playerOrUserId)
@@ -74,6 +80,7 @@ function BoardService.Init()
 		_tileState[tile.Id] = {
 			Owner = nil,
 			Level = 1,
+			Era = tile.Era,
 		}
 	end
 end
@@ -95,12 +102,22 @@ function BoardService.GetTile(tileId)
 	return {
 		Id = static.Id,
 		GridPosition = static.GridPosition,
-		Era = static.Era,
+		Era = state.Era,
 		BaseValue = static.BaseValue,
 		TileType = static.TileType,
 		Owner = state.Owner,
 		Level = state.Level,
 	}
+end
+
+function BoardService.SetEra(tileId, era)
+	local state = _tileState[tileId]
+	if state == nil then
+		return
+	end
+
+	state.Era = era
+	BoardService.EraChanged:Fire(tileId, era)
 end
 
 function BoardService.GetAllTiles()
@@ -141,7 +158,7 @@ function BoardService.GetChainMultiplier(playerOrUserId, era)
 	local ownedSameEraCount = 0
 	for _, tile in ipairs(BoardData.Tiles) do
 		local state = _tileState[tile.Id]
-		if state.Owner == userId and tile.Era == era then
+		if state.Owner == userId and state.Era == era then
 			ownedSameEraCount += 1
 		end
 	end

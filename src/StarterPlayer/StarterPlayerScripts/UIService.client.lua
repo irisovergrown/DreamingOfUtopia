@@ -25,8 +25,13 @@
 		turn, though they're still clickable; the server is what actually
 		enforces turn order, this is just a visual cue.
 
+		Terraform takes a raw era id typed into EraBox (e.g. "LaserGrid",
+		matching an EraData.Eras key — see the legend) rather than a picker;
+		blank means neutral. Only works on unclaimed tiles — see
+		TerraformService's header for why owned tiles aren't supported yet.
+
 	Server contract (see ReplicatedStorage > Shared > Remotes):
-		Client -> Server: RollRequest, SummonRequest(cardId), ChallengeRequest(cardId), PayTollRequest, EndTurnRequest
+		Client -> Server: RollRequest, SummonRequest(cardId), ChallengeRequest(cardId), PayTollRequest, EndTurnRequest, TerraformRequest(targetEra)
 		Server -> Client: StateUpdated(snapshot), ActionResult(message)
 ]]
 
@@ -46,7 +51,7 @@ screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
 frame.Name = "Panel"
-frame.Size = UDim2.fromOffset(400, 380)
+frame.Size = UDim2.fromOffset(400, 440)
 frame.Position = UDim2.fromOffset(20, 20)
 frame.BackgroundColor3 = Color3.new(0, 0, 0)
 frame.BackgroundTransparency = 0.15
@@ -137,7 +142,31 @@ local challengeButton = createButton("ChallengeButton", "Challenge", 3)
 local payTollButton = createButton("PayTollButton", "Pay Toll", 4)
 local endTurnButton = createButton("EndTurnButton", "End Turn", 5)
 
-local resultLabel = createLabel("ResultLabel", 7, 60, 14)
+local eraBox = Instance.new("TextBox")
+eraBox.Name = "EraBox"
+eraBox.LayoutOrder = 7
+eraBox.Size = UDim2.new(1, 0, 0, 26)
+eraBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+eraBox.TextColor3 = Color3.fromRGB(180, 255, 210)
+eraBox.Font = Enum.Font.Code
+eraBox.TextSize = 14
+eraBox.PlaceholderText = "terraform era id (blank = neutral)"
+eraBox.Text = ""
+eraBox.ClearTextOnFocus = false
+eraBox.Parent = frame
+
+local terraformButton = Instance.new("TextButton")
+terraformButton.Name = "TerraformButton"
+terraformButton.LayoutOrder = 8
+terraformButton.Size = UDim2.new(1, 0, 0, 28)
+terraformButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+terraformButton.TextColor3 = Color3.fromRGB(180, 255, 210)
+terraformButton.Font = Enum.Font.Code
+terraformButton.TextSize = 13
+terraformButton.Text = "Terraform"
+terraformButton.Parent = frame
+
+local resultLabel = createLabel("ResultLabel", 9, 60, 14)
 
 local legendLines = {}
 for _, card in ipairs(CardData.Cards) do
@@ -151,6 +180,13 @@ for _, card in ipairs(CardData.Cards) do
 		table.insert(legendLines, string.format("%d %s [%s] Cost%d", card.Id, card.Name, card.CardType, card.Cost))
 	end
 end
+
+local eraIdLines = {}
+for eraId, era in pairs(EraData.Eras) do
+	table.insert(eraIdLines, string.format("%s=%s", eraId, era.DisplayName))
+end
+table.insert(legendLines, "Era ids: " .. table.concat(eraIdLines, ", "))
+
 legendLabel.Text = table.concat(legendLines, "\n")
 
 local function getCardIdInput()
@@ -185,6 +221,10 @@ end)
 
 endTurnButton.Activated:Connect(function()
 	Remotes.EndTurnRequest:FireServer()
+end)
+
+terraformButton.Activated:Connect(function()
+	Remotes.TerraformRequest:FireServer(eraBox.Text)
 end)
 
 local function formatTileText(state)
@@ -236,6 +276,7 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 	challengeButton.TextColor3 = buttonColor
 	payTollButton.TextColor3 = buttonColor
 	endTurnButton.TextColor3 = buttonColor
+	terraformButton.TextColor3 = buttonColor
 end)
 
 Remotes.ActionResult.OnClientEvent:Connect(function(message)

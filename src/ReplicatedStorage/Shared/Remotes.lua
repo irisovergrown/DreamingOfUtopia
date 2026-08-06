@@ -23,6 +23,7 @@
 		ChallengeRequest  client -> server, (cardId: number)
 		PayTollRequest    client -> server, no args
 		EndTurnRequest    client -> server, no args
+		TerraformRequest  client -> server, (targetEra: string, "" means neutral)
 		StateUpdated      server -> client, (state: table snapshot)
 		ActionResult      server -> client, (message: string)
 
@@ -41,6 +42,7 @@ local REMOTE_EVENT_NAMES = {
 	"ChallengeRequest",
 	"PayTollRequest",
 	"EndTurnRequest",
+	"TerraformRequest",
 	"StateUpdated",
 	"ActionResult",
 }

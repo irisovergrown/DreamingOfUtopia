@@ -20,10 +20,10 @@
 
 		Player input/output goes through ReplicatedStorage.Shared.Remotes to
 		the client HUD (StarterPlayerScripts > UIService) — Roll/Summon/
-		Challenge/PayToll/EndTurn requests come in via RemoteEvents below,
-		gated by MatchService.IsPlayersTurn (and HasRolledThisTurn for
-		rolling) before touching Movement/Battle/Economy, and state pushes
-		back out via StateUpdated/ActionResult. Still no 2v2 alliance
+		Challenge/PayToll/EndTurn/Terraform requests come in via RemoteEvents
+		below, gated by MatchService.IsPlayersTurn (and HasRolledThisTurn for
+		rolling) before touching Movement/Battle/Economy/Terraform, and state
+		pushes back out via StateUpdated/ActionResult. Still no 2v2 alliance
 		awareness or a real match-setup lobby — see MatchService's header.
 ]]
 
@@ -41,6 +41,7 @@ local CardService = require(ServerScriptService.Systems.CardService)
 local EconomyService = require(ServerScriptService.Systems.EconomyService)
 local BattleService = require(ServerScriptService.Systems.BattleService)
 local MatchService = require(ServerScriptService.Systems.MatchService)
+local TerraformService = require(ServerScriptService.Systems.TerraformService)
 
 BoardService.Init()
 EconomyService.Init()
@@ -203,6 +204,15 @@ BoardService.TileLeveledUp:Connect(function(tileId, _newLevel)
 	refreshAllPlayerStates()
 end)
 
+BoardService.EraChanged:Connect(function(tileId, newEra)
+	local part = tileParts[tileId]
+	if part ~= nil then
+		part.Color = EraData.GetEra(newEra).Color
+	end
+	refreshTileLabel(tileId)
+	refreshAllPlayerStates()
+end)
+
 -- Cepter tokens: one ball per player, walking the board as MovementService moves them.
 local cepterTokens = {}
 
@@ -335,6 +345,29 @@ end)
 Remotes.EndTurnRequest.OnServerEvent:Connect(function(player)
 	local success, reason = MatchService.EndTurn(player)
 	Remotes.ActionResult:FireClient(player, success and "Turn ended" or ("End turn failed: " .. tostring(reason)))
+end)
+
+Remotes.TerraformRequest.OnServerEvent:Connect(function(player, targetEra)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
+	if typeof(targetEra) ~= "string" then
+		Remotes.ActionResult:FireClient(player, "Invalid era")
+		return
+	end
+
+	local normalizedEra = targetEra ~= "" and targetEra or nil
+	local tileId = MovementService.GetCurrentTile(player)
+	local cost = TerraformService.GetTerraformCost(tileId, normalizedEra)
+	local success, reason = TerraformService.TerraformTile(player, tileId, normalizedEra)
+	local message
+	if success then
+		message = string.format("Terraformed to %s (-%d Magic)", EraData.GetEra(normalizedEra).DisplayName, cost)
+	else
+		message = "Terraform failed: " .. tostring(reason)
+	end
+	Remotes.ActionResult:FireClient(player, message)
 end)
 
 EconomyService.WinTargetReached:Connect(function(userId, balance)

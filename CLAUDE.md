@@ -185,11 +185,16 @@ Systems built so far:
   assume this exact geometry, since real board content (a full board *set*)
   comes later.
 - **`Systems/BoardService`** (ModuleScript, server) — authoritative owner
-  of tile runtime state (owner, level 1-5). Implements the toll/value
-  formulas from the gameplay reference (`GetTileValue`, `GetToll`,
-  `GetChainMultiplier`, `GetLandBonusHP`). Fires `TileOwnerChanged` /
-  `TileLeveledUp` signals; other systems must go through its public API,
-  never touch tile state directly.
+  of tile runtime state (owner, level 1-5, era). Era is mutable runtime
+  state (a copy of `BoardData`'s static era, seeded in `Init`), not read
+  from `BoardData` after startup — `SetEra` (TerraformService's write path)
+  and every internal formula (`GetChainMultiplier` included — this used to
+  read the static era and silently ignore terraforming before that got
+  fixed) read/write `_tileState`, never the static table, once the match is
+  running. Implements the toll/value formulas from the gameplay reference
+  (`GetTileValue`, `GetToll`, `GetChainMultiplier`, `GetLandBonusHP`). Fires
+  `TileOwnerChanged` / `TileLeveledUp` / `EraChanged` signals; other systems
+  must go through its public API, never touch tile state directly.
 - **`Systems/MovementService`** (ModuleScript, server) — owns each Cepter's
   (player's) board position and dice rolling (`RollDice`, `MoveCepter`,
   `GetCurrentTile`, `GetLapCount`). Moves tile-by-tile via
@@ -253,42 +258,58 @@ Systems built so far:
   step or minimum player count — the match is implicitly in progress from
   the first registered player onward, same always-on-world style the rest
   of the project uses) or rematch/return-to-lobby after `MatchEnded`.
+- **`Systems/TerraformService`** (ModuleScript, server) — changes a
+  Property tile's era for Magic (`TerraformTile`), cost scaling with the
+  tile's level and with a surcharge for committing to a specific era over
+  reverting to neutral (`GetTerraformCost`). Restricted to **unclaimed**
+  tiles only — an owned tile's defender has a `CurrentHP` cached at summon
+  time (base HP + land bonus if era matched then); changing era afterward
+  would leave that stale since BattleService doesn't recompute it on a
+  later era change. Fixing that needs deliberately touching BattleService's
+  defender state, not as a side effect of this module, so it's deferred —
+  terraform before claiming, not after. Calls `BoardService.SetEra`/
+  `EconomyService.SpendMagic` directly (layered on top, same pattern as
+  other Systems-on-Systems dependencies).
 - **`Shared/Remotes`** (ModuleScript) — the only client-server bridge so
   far. Creates (server) / waits for (client) a fixed set of RemoteEvents
   under `ReplicatedStorage > Remotes`, returned as a name-keyed table so
   both sides reference the same instances instead of magic strings:
   `RollRequest`, `SummonRequest(cardId)`, `ChallengeRequest(cardId)`,
-  `PayTollRequest`, `EndTurnRequest` (client -> server), `StateUpdated(snapshot)`,
-  `ActionResult(message)` (server -> client). Request handlers must read
-  the acting player from `OnServerEvent`'s own first argument — never a
-  client-supplied one — to stay authoritative.
+  `PayTollRequest`, `EndTurnRequest`, `TerraformRequest(targetEra)`
+  (client -> server), `StateUpdated(snapshot)`, `ActionResult(message)`
+  (server -> client). Request handlers must read the acting player from
+  `OnServerEvent`'s own first argument — never a client-supplied one — to
+  stay authoritative.
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
   BoardService, MovementService, CardService, EconomyService, BattleService,
-  MatchService, and Remotes; builds the physical board onto the baseplate
-  from BoardData/EraData; wires signals to visuals (tile labels/material,
-  defender name+HP on the label, a per-player ball "Cepter token" that
-  walks the board); registers/cleans up Cepters, Magic balances, and turn
-  rotation on PlayerAdded/PlayerRemoving. The 5 `*Request` RemoteEvents are
-  handled here, each gated by `MatchService.IsPlayersTurn` (roll also
-  checks `HasRolledThisTurn`) before calling into Movement/Battle/Economy —
+  MatchService, TerraformService, and Remotes; builds the physical board
+  onto the baseplate from BoardData/EraData; wires signals to visuals (tile
+  labels/material/color, defender name+HP on the label, a per-player ball
+  "Cepter token" that walks the board); registers/cleans up Cepters, Magic
+  balances, and turn rotation on PlayerAdded/PlayerRemoving. The 6
+  `*Request` RemoteEvents are handled here, each gated by
+  `MatchService.IsPlayersTurn` (roll also checks `HasRolledThisTurn`)
+  before calling into Movement/Battle/Economy/Terraform —
   `sendStateToPlayer`/`refreshAllPlayerStates` push a per-player state
   snapshot (including turn/match info) over `StateUpdated` whenever
-  anything relevant changes (movement, balance, tile ownership/level, turn,
-  match end).
+  anything relevant changes (movement, balance, tile ownership/level/era,
+  turn, match end).
 - **`StarterPlayer/UIService.client.lua`** (LocalScript) — first slice of
   UIService: a plain monospace "terminal" HUD (`ScreenGui`/`Frame`, no card
   art or animation) with a turn indicator, Magic balance line, current-tile
-  info, a card-id `TextBox`, and Roll/Summon/Challenge/Pay Toll/End Turn
-  buttons that fire the matching Remote. Action buttons dim when it isn't
-  the local player's turn (visual cue only — the server is the actual
-  enforcement). Reads `CardData`/`EraData` directly for a card-id legend
+  info, a card-id `TextBox`, an era-id `TextBox` (raw `EraData.Eras` keys,
+  listed in the legend), and Roll/Summon/Challenge/Pay Toll/End Turn/
+  Terraform buttons that fire the matching Remote. Action buttons dim when
+  it isn't the local player's turn (visual cue only — the server is the
+  actual enforcement). Reads `CardData`/`EraData` directly for the legend
   (safe — pure static Shared data, no security concern). Only talks to the
   server through `Shared.Remotes`; cannot and does not require server
   ModuleScripts.
 
-Not yet built: TerraformService, match setup/lobby and 2v2 alliance mode
-(see MatchService's header for what's deferred there), persistence/
-DataStore layer, and the rest of UIService (card hand, deck builder).
+Not yet built: match setup/lobby and 2v2 alliance mode (see MatchService's
+header for what's deferred there), persistence/DataStore layer, terraforming
+an owned tile (see TerraformService's header), and the rest of UIService
+(card hand, deck builder).
 
 ### Planned architecture change: hand-authored boards (not yet built)
 

@@ -49,12 +49,15 @@ already be code — headers are plain `--[[ ]]` comments and paste in fine as-is
   claimed tile
 - `Systems/MatchService` — turn order rotation, match-end on win target,
   FFA-only team stubs for a future 2v2 alliance mode
+- `Systems/TerraformService` — changes an unclaimed Property tile's era for
+  Magic, cost scales with level + a surcharge for a specific (non-neutral) era
 - `Shared/Remotes` — client-server RemoteEvent bridge (Roll/Summon/Challenge/
-  PayToll/EndTurn requests, StateUpdated/ActionResult pushes)
+  PayToll/EndTurn/Terraform requests, StateUpdated/ActionResult pushes)
 - `Main.server.lua` — bootstrap: builds the board on the baseplate, spawns
   Cepter tokens, wires Board/Movement/Battle/Economy/Match signals to
-  visuals and per-player state pushes over Remotes, gates the 5 action
+  visuals and per-player state pushes over Remotes, gates the 6 action
   RemoteEvents on MatchService's turn checks
 - `StarterPlayer/UIService.client.lua` — plain monospace HUD (turn
-  indicator, balance, tile info, card-id input, Roll/Summon/Challenge/Pay
-  Toll/End Turn buttons, dimmed when it isn't your turn)
+  indicator, balance, tile info, card-id + era-id inputs,
+  Roll/Summon/Challenge/Pay Toll/End Turn/Terraform buttons, dimmed when
+  it isn't your turn)
