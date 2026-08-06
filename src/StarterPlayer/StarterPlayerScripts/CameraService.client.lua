@@ -46,9 +46,18 @@
 		a new Cepter token, but instance replication and RemoteEvent
 		delivery aren't guaranteed to arrive in that order, so the token
 		can genuinely not exist on the client yet for a brief moment.
+
+		Setting CameraType = Scriptable once (or even re-setting it whenever
+		CurrentCamera changes) isn't enough on its own — Roblox's own
+		default camera control script, present in every place whether we
+		added it or not, keeps re-asserting itself and will flip CameraType
+		back to Custom on its own, which snaps the view straight back to
+		following the character. RenderStepped below continuously re-claims
+		Scriptable every frame so that reset never has a chance to stick.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -71,6 +80,13 @@ end
 
 claimCamera()
 Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(claimCamera)
+
+RunService.RenderStepped:Connect(function()
+	if camera ~= nil and camera.CameraType ~= Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Scriptable
+	end
+end)
+
 print("[DreamingOfUtopia] CameraService active")
 
 local cepterFolder = Workspace:WaitForChild("Cepters", 10)
