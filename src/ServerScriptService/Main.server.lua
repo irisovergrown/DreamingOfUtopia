@@ -6,17 +6,22 @@
 
 	Purpose:
 		First thing that runs when the place starts. Initializes
-		BoardService and physically builds the greybox board (BoardData)
-		onto the baseplate so the layout is visible and testable in Studio.
-		Also registers each joining player with MovementService (board
-		position) and EconomyService (Magic balance), and gives them a
-		simple ball "Cepter token" that walks the board on move.
+		BoardService, which builds its tile registry from hand-placed,
+		CollectionService-tagged Parts already sitting in Workspace (see
+		BoardService's header for the tagging/attribute scheme) — this
+		script does NOT spawn tiles, it just finds the ones already there
+		and attaches a BillboardGui label to each. Also registers each
+		joining player with MovementService (board position) and
+		EconomyService (Magic balance), and gives them a simple ball
+		"Cepter token" that walks the board on move.
 		This is the wiring layer — it requires systems and connects their
 		Signals, but game systems still never require each other directly.
 
-		Nothing here is meant to be final visual art — plain colored parts
-		and a BillboardGui label, just enough to see the board loop and
-		verify Board/Movement/Battle/Economy state changes render.
+		A tile Part's own color/material/model are entirely Studio-authored
+		by the developer (own board designs, not code-generated) — the only
+		visuals this script adds are the BillboardGui label and the
+		ownership Material flip (Neon) / era recolor reactions below, which
+		are universal gameplay-state indicators, not part of a tile's design.
 
 		Player input/output goes through ReplicatedStorage.Shared.Remotes to
 		the client HUD (StarterPlayerScripts > UIService) — Roll/Summon/
@@ -27,12 +32,12 @@
 		awareness or a real match-setup lobby — see MatchService's header.
 ]]
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 local Workspace = game:GetService("Workspace")
 
-local BoardData = require(ReplicatedStorage.Shared.BoardData)
 local EraData = require(ReplicatedStorage.Shared.EraData)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local BoardService = require(ServerScriptService.Systems.BoardService)
@@ -48,38 +53,20 @@ EconomyService.Init()
 BattleService.Init()
 MatchService.Init()
 
-local boardFolder = Instance.new("Folder")
-boardFolder.Name = "Board"
-boardFolder.Parent = Workspace
+local TILE_TAG = "Tile"
+local CEPTER_TOKEN_RADIUS = 1.5
 
--- Grid is 0..4 on both axes (see BoardData) — center it on the origin.
-local GRID_CENTER = 2
-local TILE_HEIGHT = 2
-local CEPTER_TOKEN_HEIGHT = 3
+local cepterFolder = Instance.new("Folder")
+cepterFolder.Name = "Cepters"
+cepterFolder.Parent = Workspace
 
-local function gridToWorldPosition(gridPosition, yOffset)
-	return Vector3.new(
-		(gridPosition.X - GRID_CENTER) * BoardData.TileSpacing,
-		yOffset,
-		(gridPosition.Z - GRID_CENTER) * BoardData.TileSpacing
-	)
-end
-
+-- tileId -> Part, built from the same "Tile" tag BoardService itself scans.
+-- Kept separate from BoardService on purpose — it stays instance-agnostic
+-- (pure data/logic); this is a visual-only concern that belongs to Main.
 local tileParts = {}
-local tileGridById = {}
+local tileLabels = {}
 
-local function createTilePart(tile)
-	local era = EraData.GetEra(tile.Era)
-
-	local part = Instance.new("Part")
-	part.Name = "Tile_" .. tile.Id
-	part.Anchored = true
-	part.Size = Vector3.new(BoardData.TileSize, TILE_HEIGHT, BoardData.TileSize)
-	part.Position = gridToWorldPosition(tile.GridPosition, TILE_HEIGHT / 2)
-	part.Color = era.Color
-	part.Material = Enum.Material.SmoothPlastic
-	part.Parent = boardFolder
-
+local function attachTileLabel(tileId, part)
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "TileLabel"
 	billboard.Size = UDim2.fromOffset(160, 40)
@@ -97,25 +84,30 @@ local function createTilePart(tile)
 	label.TextStrokeTransparency = 0.3
 	label.Parent = billboard
 
-	tileParts[tile.Id] = part
-
-	return part, label
+	tileLabels[tileId] = label
 end
 
-local tileLabels = {}
-
-for _, tile in ipairs(BoardData.Tiles) do
-	local part, label = createTilePart(tile)
-	tileLabels[tile.Id] = label
-	tileGridById[tile.Id] = tile.GridPosition
+local taggedTileParts = CollectionService:GetTagged(TILE_TAG)
+if #taggedTileParts == 0 then
+	warn("[DreamingOfUtopia] No Parts tagged '" .. TILE_TAG .. "' found in Workspace — hand-place and tag a board before playing (see BoardService's header).")
 end
 
-local function getTileWorldPosition(tileId, yOffset)
-	local gridPosition = tileGridById[tileId]
-	if gridPosition == nil then
-		return Vector3.new(0, yOffset, 0)
+for _, part in ipairs(taggedTileParts) do
+	local tileId = part:GetAttribute("Id")
+	if tileId ~= nil then
+		tileParts[tileId] = part
+		attachTileLabel(tileId, part)
 	end
-	return gridToWorldPosition(gridPosition, yOffset)
+end
+
+-- A point `radius` studs above the tile Part's own top surface — works
+-- regardless of a hand-placed tile's size or elevation.
+local function getTileWorldPosition(tileId, radius)
+	local part = tileParts[tileId]
+	if part == nil then
+		return Vector3.new(0, radius, 0)
+	end
+	return part.Position + Vector3.new(0, part.Size.Y / 2 + radius, 0)
 end
 
 local function refreshTileLabel(tileId)
@@ -145,8 +137,8 @@ local function refreshTileLabel(tileId)
 	label.Text = string.format("#%d — %s — Lv%d — %s%s", tile.Id, era.DisplayName, tile.Level, ownerText, defenderText)
 end
 
-for _, tile in ipairs(BoardData.Tiles) do
-	refreshTileLabel(tile.Id)
+for tileId, _ in pairs(tileParts) do
+	refreshTileLabel(tileId)
 end
 
 -- Per-player HUD state snapshot, pushed to the client over Remotes.StateUpdated.
@@ -171,6 +163,7 @@ local function buildStateSnapshot(player)
 		DefenderHP = defender and defender.CurrentHP,
 		Toll = (tile and tile.TileType == "Property" and tile.Owner ~= nil) and BoardService.GetToll(tileId) or 0,
 		IsYourTurn = MatchService.IsPlayersTurn(player),
+		CurrentTurnUserId = currentTurnPlayer and currentTurnPlayer.UserId,
 		CurrentTurnName = currentTurnPlayer and currentTurnPlayer.Name,
 		HasRolled = MatchService.HasRolledThisTurn(),
 		MatchEnded = MatchService.IsMatchEnded(),
@@ -224,8 +217,8 @@ local function createCepterToken(player)
 	token.Anchored = true
 	token.CanCollide = false
 	token.Color = BrickColor.Random().Color
-	token.Position = getTileWorldPosition(MovementService.GetCurrentTile(player), CEPTER_TOKEN_HEIGHT)
-	token.Parent = boardFolder
+	token.Position = getTileWorldPosition(MovementService.GetCurrentTile(player), CEPTER_TOKEN_RADIUS)
+	token.Parent = cepterFolder
 
 	cepterTokens[player.UserId] = token
 end
@@ -253,7 +246,7 @@ end
 MovementService.CepterMoved:Connect(function(player, _fromTileId, toTileId)
 	local token = cepterTokens[player.UserId]
 	if token ~= nil then
-		token.Position = getTileWorldPosition(toTileId, CEPTER_TOKEN_HEIGHT)
+		token.Position = getTileWorldPosition(toTileId, CEPTER_TOKEN_RADIUS)
 	end
 	sendStateToPlayer(player)
 end)
@@ -393,5 +386,5 @@ for _, player in ipairs(Players:GetPlayers()) do
 	onPlayerAdded(player)
 end
 
-print("[DreamingOfUtopia] Board initialized:", #BoardData.Tiles, "tiles")
+print("[DreamingOfUtopia] Board initialized:", #BoardService.GetAllTiles(), "tiles")
 print("[DreamingOfUtopia] Cards loaded:", #CardService.GetAllCards())

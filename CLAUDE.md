@@ -90,10 +90,8 @@ in-fiction studio banner "Ninth Signal."
   angled top-down/side "stage" camera that snaps to focus on whichever
   player currently has the turn. Everyone in the match sees the same
   framing at the same time — this is NOT free per-player camera control,
-  and not just "look at your own Cepter." Implies a future client-side
-  system (e.g. `CameraService`, LocalScript) that reacts to match-wide turn
-  state — depends on MatchService (turn order) existing first, so it can't
-  be built until that system exists.
+  and not just "look at your own Cepter." Built as `CameraService`
+  (LocalScript) — see "Systems built so far" below.
 
 ## Still undecided / open
 
@@ -124,15 +122,21 @@ edit piece by piece without cascading confusion.
 `src/` mirrors the Roblox Studio instance tree directly:
 
 ```
-src/ReplicatedStorage/Shared/...                          -> ReplicatedStorage > Shared > ...
-src/ServerScriptService/Systems/...                        -> ServerScriptService > Systems > ...
-src/ServerScriptService/Main.server.lua                    -> ServerScriptService > Main (Script)
-src/StarterPlayer/StarterPlayerScripts/UIService.client.lua -> StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
+src/ReplicatedStorage/Shared/...                            -> ReplicatedStorage > Shared > ...
+src/ServerScriptService/Systems/...                          -> ServerScriptService > Systems > ...
+src/ServerScriptService/Main.server.lua                      -> ServerScriptService > Main (Script)
+src/StarterPlayer/StarterPlayerScripts/UIService.client.lua   -> StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
+src/StarterPlayer/StarterPlayerScripts/CameraService.client.lua -> StarterPlayer > StarterPlayerScripts > CameraService (LocalScript)
 ```
 
 Every script file's header comment states its Roblox instance type
 (`Script` / `LocalScript` / `ModuleScript`), its exact Studio placement, and
 its public API.
+
+`tools/` holds one-time Studio Command Bar utility scripts — not part of the
+runtime game, nothing in `src/` references them, safe to ignore or delete
+once used. Currently just `recreate-placeholder-board.lua` (see BoardService's
+"hand-authored boards" note below).
 
 ## Getting code into Studio — two workflows
 
@@ -177,35 +181,44 @@ Systems built so far:
 - **`Shared/EraData`** (ModuleScript) — registry of retrofuturism eras
   (display name + placeholder color per era). Open-ended by design — add an
   entry, every system that reads it picks up the new era automatically.
-- **`Shared/BoardData`** (ModuleScript) — static greybox board layout: a
-  placeholder 16-tile perimeter loop (5x5 grid border), tiles cycling
-  through the 4 confirmed eras plus one Start tile. Not final board content
-  — just enough geometry to exercise the system end to end. Board rendering
-  and movement code should key off `Tile.Id` / `GetNextTileId`, never
-  assume this exact geometry, since real board content (a full board *set*)
-  comes later.
 - **`Systems/BoardService`** (ModuleScript, server) — authoritative owner
-  of tile runtime state (owner, level 1-5, era). Era is mutable runtime
-  state (a copy of `BoardData`'s static era, seeded in `Init`), not read
-  from `BoardData` after startup — `SetEra` (TerraformService's write path)
-  and every internal formula (`GetChainMultiplier` included — this used to
-  read the static era and silently ignore terraforming before that got
-  fixed) read/write `_tileState`, never the static table, once the match is
-  running. Implements the toll/value formulas from the gameplay reference
-  (`GetTileValue`, `GetToll`, `GetChainMultiplier`, `GetLandBonusHP`). Fires
-  `TileOwnerChanged` / `TileLeveledUp` / `EraChanged` signals; other systems
-  must go through its public API, never touch tile state directly.
+  of the board itself, now **hand-authored**: tiles are Parts placed
+  directly in Workspace by the developer (own board designs, not
+  code-generated), tagged `"Tile"` via `CollectionService`, with attributes
+  set in Studio's Properties panel: `Id` (number, required — order in the
+  movement loop; does NOT need to be contiguous, only uniquely orderable,
+  since `GetNextTileId` sorts once at `Init` and walks that order rather
+  than doing `id + 1` arithmetic), `TileType` (`"Start"` or `"Property"`,
+  required), `Era` (must match an `EraData.Eras` key, or blank for
+  neutral/Start, optional), `BaseValue` (optional, defaults to 0 for Start
+  / 100 for Property). `Init` scans `CollectionService:GetTagged("Tile")`
+  and builds the runtime tile registry from those attributes — a tile
+  missing `Id` is skipped with a `warn()`. Everything about a tile's
+  *appearance* (its Part's Position/Color/Material/model) is entirely
+  Studio-authored and BoardService never touches or needs it — Owner/
+  Level/Era are the only mutable runtime state it tracks, mutated only
+  through its public API (`SetOwner`, `LevelUp`, `SetEra`), never touched
+  directly by other systems. Implements the toll/value formulas from the
+  gameplay reference (`GetTileValue`, `GetToll`, `GetChainMultiplier`,
+  `GetLandBonusHP`). Fires `TileOwnerChanged` / `TileLeveledUp` /
+  `EraChanged` signals. `tools/recreate-placeholder-board.lua` is a
+  one-time Studio Command Bar script (not part of the runtime game) that
+  recreates the old procedural 16-tile loop as real tagged/attributed
+  Parts — a working starting point to hand-edit from, not required.
 - **`Systems/MovementService`** (ModuleScript, server) — owns each Cepter's
   (player's) board position and dice rolling (`RollDice`, `MoveCepter`,
   `GetCurrentTile`, `GetLapCount`). Moves tile-by-tile via
-  `BoardData.GetNextTileId`, deliberately has no knowledge of tile
-  ownership/tolls. Fires `CepterMoved` (per step), `CepterLanded` (move
-  finished — the intended hook point for auto-triggering BattleService on
-  landing once a real turn UI exists to gather player intent; nothing
-  auto-connects to it yet, `Main.server.lua`'s `SummonRequest`/
-  `ChallengeRequest` handlers drive BattleService from the client HUD
-  instead), and `LapCompleted` (passed Start — hook point for the lap
-  bonus once EconomyService exists).
+  `BoardService.GetNextTileId`/`GetStartTileId` — its only dependency on
+  BoardService, deliberately narrow (pure read-only topology, never
+  ownership/tolls; this data used to live in the now-deleted static
+  `Shared/BoardData` module, moved here because only BoardService's
+  CollectionService scan knows tile order once boards are hand-authored).
+  Fires `CepterMoved` (per step), `CepterLanded` (move finished — the
+  intended hook point for auto-triggering BattleService on landing once a
+  real turn UI exists to gather player intent; nothing auto-connects to it
+  yet, `Main.server.lua`'s `SummonRequest`/`ChallengeRequest` handlers
+  drive BattleService from the client HUD instead), and `LapCompleted`
+  (passed Start — hook point for the lap bonus once EconomyService exists).
 - **`Shared/CardData`** (ModuleScript) — static registry of Creature/Spell/
   Item cards. Small placeholder set (one creature per confirmed era, one
   generic spell, one generic item) — not the real 60-80 card launch
@@ -282,18 +295,24 @@ Systems built so far:
   stay authoritative.
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
   BoardService, MovementService, CardService, EconomyService, BattleService,
-  MatchService, TerraformService, and Remotes; builds the physical board
-  onto the baseplate from BoardData/EraData; wires signals to visuals (tile
-  labels/material/color, defender name+HP on the label, a per-player ball
-  "Cepter token" that walks the board); registers/cleans up Cepters, Magic
-  balances, and turn rotation on PlayerAdded/PlayerRemoving. The 6
+  MatchService, TerraformService, and Remotes. Does NOT spawn tiles — scans
+  `CollectionService:GetTagged("Tile")` itself (same tag BoardService
+  scans, kept as a separate scan on purpose: BoardService stays
+  instance-agnostic/pure data, this is a visual-only concern) to find the
+  hand-placed tile Parts and attach a BillboardGui label to each; wires
+  signals to visuals (label text, ownership Material flip to Neon, era
+  recolor, a per-player ball "Cepter token" parented under a `Cepters`
+  folder that walks the board using each tile Part's own `.Position`);
+  registers/cleans up Cepters, Magic balances, and turn rotation on
+  PlayerAdded/PlayerRemoving. `warn()`s if no tagged tiles are found at
+  boot (helps catch a forgotten tag/attribute during hand-authoring). The 6
   `*Request` RemoteEvents are handled here, each gated by
   `MatchService.IsPlayersTurn` (roll also checks `HasRolledThisTurn`)
   before calling into Movement/Battle/Economy/Terraform —
   `sendStateToPlayer`/`refreshAllPlayerStates` push a per-player state
-  snapshot (including turn/match info) over `StateUpdated` whenever
-  anything relevant changes (movement, balance, tile ownership/level/era,
-  turn, match end).
+  snapshot (including turn/match info, and the current turn's userId for
+  CameraService) over `StateUpdated` whenever anything relevant changes
+  (movement, balance, tile ownership/level/era, turn, match end).
 - **`StarterPlayer/UIService.client.lua`** (LocalScript) — first slice of
   UIService: a plain monospace "terminal" HUD (`ScreenGui`/`Frame`, no card
   art or animation) with a turn indicator, Magic balance line, current-tile
@@ -305,31 +324,24 @@ Systems built so far:
   (safe — pure static Shared data, no security concern). Only talks to the
   server through `Shared.Remotes`; cannot and does not require server
   ModuleScripts.
+- **`StarterPlayer/CameraService.client.lua`** (LocalScript) — the
+  match-wide turn-synced "stage" camera from the design decisions above.
+  Takes the camera fully `Scriptable` (no free-roam gameplay exists to lose
+  by not using the default follow-avatar camera) and, on every
+  `StateUpdated` push where `CurrentTurnUserId` changed, finds that
+  player's `"Cepter_"..userId` token under Workspace (plain replication,
+  visible to every client automatically — no camera-specific networking)
+  and tweens to an angled offset framing it. Also subscribes to that
+  token's own `Position` changes while focused on it, so the camera keeps
+  following live as the active player rolls/moves during their turn, not
+  just once at turn-start. Entirely decoupled from board geometry/data —
+  only ever reads a Cepter token's live Position, never tile data — so it
+  needed zero changes for the hand-authored-boards switch above.
 
 Not yet built: match setup/lobby and 2v2 alliance mode (see MatchService's
 header for what's deferred there), persistence/DataStore layer, terraforming
-an owned tile (see TerraformService's header), and the rest of UIService
-(card hand, deck builder).
-
-### Planned architecture change: hand-authored boards (not yet built)
-
-Board layout will eventually move from `BoardData`'s hardcoded Lua table to
-hand-placed geometry: the developer builds tiles as Parts directly in
-Workspace (own board designs, not code-generated), tags each with
-`CollectionService` as `"Tile"`, and sets attributes directly on the part
-in Studio's Properties panel — at minimum `Id` (order in the movement loop
-— tile adjacency is NOT inferable from spatial position, so this can't be
-skipped) and `Era` (must match an `EraData.Eras` key, or blank for Start/
-neutral). `BoardService` would then build its tile registry by scanning
-`CollectionService:GetTagged("Tile")` and reading attributes, instead of
-iterating `BoardData.Tiles`; `Main.server.lua` would stop spawning tile
-parts procedurally and just hook up the ones already placed by hand.
-`BoardService`'s public API (`GetTile`, `GetToll`, etc.) does not need to
-change — only its data source. `MovementService` already depends only on
-`BoardData.GetNextTileId`, so as long as the replacement board-loading code
-preserves an equivalent function keyed by `Id`, `MovementService` needs no
-changes either. Not built yet — deferred so a currently-working, tested
-system (procedural board + movement) isn't touched without reason.
+an owned tile (see TerraformService's header), custom Cepter token model
+(still a plain ball), and the rest of UIService (card hand, deck builder).
 
 ## Working style — how to respond (manual copy-paste sessions)
 

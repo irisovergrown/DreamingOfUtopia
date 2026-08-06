@@ -6,11 +6,20 @@
 
 	Purpose:
 		Owns each Cepter's (player's) position on the board loop and dice
-		rolling. Moves a Cepter tile-by-tile via BoardData.GetNextTileId so
-		callers can react per-step (animation) or just to the final landing.
-		Deliberately doesn't know about tile ownership, tolls, or claiming
-		— BoardService/BattleService react to CepterLanded for that, per the
-		project's cross-system signal rule.
+		rolling. Moves a Cepter tile-by-tile via BoardService.GetNextTileId
+		so callers can react per-step (animation) or just to the final
+		landing. Deliberately doesn't know about tile ownership, tolls, or
+		claiming — BoardService/BattleService react to CepterLanded for
+		that, per the project's cross-system signal rule.
+
+		Depends on BoardService for exactly two read-only topology queries
+		(GetNextTileId, GetStartTileId) — deliberately NOT a broader
+		dependency; this module still never touches ownership, tolls, or
+		any other BoardService state. That topology used to live in the
+		static Shared/BoardData module; now that boards are hand-authored
+		(CollectionService-tagged Parts, see BoardService's header),
+		BoardService is the only thing that actually knows tile order at
+		runtime, so this had to move here with it.
 
 	Public API:
 		MovementService.RegisterCepter(player)
@@ -27,17 +36,16 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Signal = require(ReplicatedStorage.Shared.Signal)
-local BoardData = require(ReplicatedStorage.Shared.BoardData)
+local BoardService = require(ServerScriptService.Systems.BoardService)
 
 local MovementService = {}
 
 MovementService.CepterMoved = Signal.new()
 MovementService.CepterLanded = Signal.new()
 MovementService.LapCompleted = Signal.new()
-
-local START_TILE_ID = 1
 
 -- Seconds paused between each tile-step during a move — placeholder pacing
 -- so CepterMoved reads as stepwise movement instead of an instant jump.
@@ -51,7 +59,7 @@ local _cepterState = {}
 
 function MovementService.RegisterCepter(player)
 	_cepterState[player.UserId] = {
-		CurrentTileId = START_TILE_ID,
+		CurrentTileId = BoardService.GetStartTileId(),
 		LapCount = 0,
 	}
 end
@@ -90,14 +98,16 @@ function MovementService.MoveCepter(player, spaces)
 		return nil
 	end
 
+	local startTileId = BoardService.GetStartTileId()
+
 	for _ = 1, spaces do
 		local fromTileId = state.CurrentTileId
-		local toTileId = BoardData.GetNextTileId(fromTileId)
+		local toTileId = BoardService.GetNextTileId(fromTileId)
 		state.CurrentTileId = toTileId
 
 		MovementService.CepterMoved:Fire(player, fromTileId, toTileId)
 
-		if toTileId == START_TILE_ID then
+		if toTileId == startTileId then
 			state.LapCount += 1
 			MovementService.LapCompleted:Fire(player, state.LapCount)
 		end

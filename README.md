@@ -20,10 +20,11 @@ into Roblox Studio (no Rojo sync). The `src/` folder mirrors the Studio
 instance tree directly:
 
 ```
-src/ReplicatedStorage/Shared/...                          -> ReplicatedStorage > Shared > ...
-src/ServerScriptService/Systems/...                        -> ServerScriptService > Systems > ...
-src/ServerScriptService/Main.server.lua                    -> ServerScriptService > Main (Script)
-src/StarterPlayer/StarterPlayerScripts/UIService.client.lua -> StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
+src/ReplicatedStorage/Shared/...                                -> ReplicatedStorage > Shared > ...
+src/ServerScriptService/Systems/...                              -> ServerScriptService > Systems > ...
+src/ServerScriptService/Main.server.lua                          -> ServerScriptService > Main (Script)
+src/StarterPlayer/StarterPlayerScripts/UIService.client.lua       -> StarterPlayer > StarterPlayerScripts > UIService (LocalScript)
+src/StarterPlayer/StarterPlayerScripts/CameraService.client.lua   -> StarterPlayer > StarterPlayerScripts > CameraService (LocalScript)
 ```
 
 Each file's header comment states its Roblox instance type (`Script` /
@@ -32,14 +33,31 @@ API. When pasting into Studio: create the instance at the stated path, set
 its ClassName/type as stated, paste the body (the file minus the type may
 already be code — headers are plain `--[[ ]]` comments and paste in fine as-is).
 
+`tools/` holds one-time Studio Command Bar utility scripts, not part of the
+runtime game — currently `recreate-placeholder-board.lua`, which recreates
+the old procedural 16-tile loop as real tagged/attributed Parts (a starting
+point for hand-editing, see "Board authoring" below).
+
+## Board authoring
+
+The board is hand-authored, not code-generated: place Parts in Workspace,
+tag each `"Tile"` (CollectionService), and set attributes in Studio's
+Properties panel — `Id` (number, required), `TileType` (`"Start"` or
+`"Property"`, required), `Era` (an `EraData.Eras` key, optional/blank =
+neutral), `BaseValue` (optional). `BoardService` builds its tile registry
+by scanning those tags/attributes at `Init`; `Main.server.lua` never spawns
+tiles. Run `tools/recreate-placeholder-board.lua` once from Studio's
+Command Bar for a working starting layout to edit from.
+
 ## Current systems
 
 - `Shared/Signal` — cross-system pub/sub event object
 - `Shared/EraData` — retrofuturism era registry (colors, display names)
-- `Shared/BoardData` — static greybox board layout (16-tile perimeter loop)
-- `Systems/BoardService` — authoritative tile ownership/level state, tile
-  value & toll formulas
-- `Systems/MovementService` — Cepter board position, dice rolling, move/lap signals
+- `Systems/BoardService` — hand-authored board registry (scans
+  CollectionService-tagged tiles), ownership/level/era state, tile value &
+  toll formulas
+- `Systems/MovementService` — Cepter board position, dice rolling, move/lap
+  signals (topology via `BoardService.GetNextTileId`/`GetStartTileId`)
 - `Shared/CardData` — static Creature/Spell/Item card registry (placeholder set)
 - `Systems/CardService` — query API over CardData
 - `Systems/EconomyService` — Magic balances, lap bonus (auto-applied),
@@ -53,11 +71,15 @@ already be code — headers are plain `--[[ ]]` comments and paste in fine as-is
   Magic, cost scales with level + a surcharge for a specific (non-neutral) era
 - `Shared/Remotes` — client-server RemoteEvent bridge (Roll/Summon/Challenge/
   PayToll/EndTurn/Terraform requests, StateUpdated/ActionResult pushes)
-- `Main.server.lua` — bootstrap: builds the board on the baseplate, spawns
-  Cepter tokens, wires Board/Movement/Battle/Economy/Match signals to
-  visuals and per-player state pushes over Remotes, gates the 6 action
-  RemoteEvents on MatchService's turn checks
+- `Main.server.lua` — bootstrap: finds hand-placed tiles (doesn't spawn
+  them), spawns Cepter tokens, wires Board/Movement/Battle/Economy/Match
+  signals to visuals and per-player state pushes over Remotes, gates the 6
+  action RemoteEvents on MatchService's turn checks
 - `StarterPlayer/UIService.client.lua` — plain monospace HUD (turn
   indicator, balance, tile info, card-id + era-id inputs,
   Roll/Summon/Challenge/Pay Toll/End Turn/Terraform buttons, dimmed when
   it isn't your turn)
+- `StarterPlayer/CameraService.client.lua` — match-wide, turn-synced stage
+  camera; snaps to and follows whichever player currently has the turn,
+  same framing for everyone, computed independently per-client from synced
+  turn state (no camera-specific networking)
