@@ -31,12 +31,13 @@
 					PrimaryPart is set to that HumanoidRootPart on clone.
 					CameraService depends on that exact child name to find
 					its focus target's position, so it must be present.
-				ReplicatedStorage > Models > Summons > <any name> (Model)
-					One Model per creature card, matched to CardData by a
-					number Attribute named "CardId" set on the Model itself
-					(the Model's own Name can be anything readable) — same
-					attribute-driven lookup pattern BoardService already
-					uses for tile data, kept consistent on purpose.
+				ReplicatedStorage > Models > Summons > <any name> (Model or Part)
+					One Model (or a single Part, for simple stand-ins) per
+					creature card, matched to CardData by a number Attribute
+					named "CardId" set on the instance itself (its own Name
+					can be anything readable) — same attribute-driven lookup
+					pattern BoardService already uses for tile data, kept
+					consistent on purpose.
 			If a template/model is missing, the corresponding token/marker
 			is simply skipped with a warn() — nothing else breaks.
 
@@ -156,30 +157,39 @@ end
 -- Cloned models are teleport-positioned (PivotTo), never simulated —
 -- anchoring every part keeps them from falling/reacting to physics,
 -- matching the fully-anchored/teleport-based movement the rest of the
--- board already uses.
-local function anchorAllParts(model)
-	for _, descendant in ipairs(model:GetDescendants()) do
+-- board already uses. Handles both a Model (anchor its descendant Parts)
+-- and a lone BasePart used directly as a summon (anchor itself too — a
+-- single Part has no descendants of its own).
+local function anchorAllParts(instance)
+	if instance:IsA("BasePart") then
+		instance.Anchored = true
+	end
+	for _, descendant in ipairs(instance:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = true
 		end
 	end
 end
 
--- Finds the Models.Summons Model whose "CardId" Attribute matches — see
+-- Finds the Models.Summons entry whose "CardId" Attribute matches — see
 -- this file's header ("Model authoring") for the naming/attribute contract.
+-- Accepts either a Model or a single BasePart (both support Clone/PivotTo/
+-- GetBoundingBox via PVInstance), since a simple stand-in summon might
+-- just be one Part rather than a full Model.
 local function findSummonModel(cardId)
 	if SUMMON_MODELS_FOLDER == nil then
 		return nil
 	end
-	for _, model in ipairs(SUMMON_MODELS_FOLDER:GetChildren()) do
-		if model:IsA("Model") and model:GetAttribute("CardId") == cardId then
-			return model
+	for _, instance in ipairs(SUMMON_MODELS_FOLDER:GetChildren()) do
+		if (instance:IsA("Model") or instance:IsA("BasePart")) and instance:GetAttribute("CardId") == cardId then
+			return instance
 		end
 	end
 	return nil
 end
 
--- tileId -> the cloned creature Model marking that tile's defender.
+-- tileId -> the cloned creature instance (Model or Part) marking that
+-- tile's defender.
 local defenderMarkers = {}
 
 local function updateDefenderMarker(tileId, newOwnerUserId)
