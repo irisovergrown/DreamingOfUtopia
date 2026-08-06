@@ -136,8 +136,10 @@ its public API.
 
 `tools/` holds one-time Studio Command Bar utility scripts — not part of the
 runtime game, nothing in `src/` references them, safe to ignore or delete
-once used. Currently just `recreate-placeholder-board.lua` (see BoardService's
-"hand-authored boards" note below).
+once used. Currently `recreate-placeholder-board.lua` (see BoardService's
+"hand-authored boards" note below) and `create-model-folders.lua` (creates
+the empty `Models.Player`/`Models.Summons` folder scaffolding — see
+Main.server.lua's "Model authoring" note further down).
 
 ## Getting code into Studio — two workflows
 
@@ -302,19 +304,45 @@ Systems built so far:
   instance-agnostic/pure data, this is a visual-only concern) to find the
   hand-placed tile Parts and attach a BillboardGui label to each; wires
   signals to visuals (label text, ownership Material flip to Neon, era
-  recolor, a per-player basic R6-shaped stand-in rig "Cepter token" —
-  Torso/Head/Arms/Legs as plain colored blocks, not final character art —
-  parented under a `Cepters` folder that walks the board using each tile
-  Part's own `.Position`; the Torso is the named `"Cepter_"..userId` part
-  everything else, CameraService included, looks up, the other rig parts
-  are repositioned in lockstep from stored offsets whenever it moves). Also
-  spawns a single colored `Neon` block per claimed tile under a `Defenders`
-  folder as a placeholder marker for whichever creature defends it (colored
-  by that creature's era), driven by the same `TileOwnerChanged` signal —
-  not real creature art, just "something is here." Registers/cleans up
-  Cepters, Magic balances, and turn rotation on PlayerAdded/PlayerRemoving.
-  `warn()`s if no tagged tiles are found at boot (helps catch a forgotten
-  tag/attribute during hand-authoring). The 6 `*Request` RemoteEvents are
+  recolor, a per-player "Cepter token" cloned from a **developer-authored
+  model** rather than built in code — see "Model authoring" below —
+  parented under a `Cepters` folder, named `"Cepter_"..userId` (the exact
+  name CameraService looks up), moved with `Model:PivotTo` on every
+  `MovementService.CepterMoved`). Also clones the matching creature model
+  onto a claimed tile under a `Defenders` folder, driven by the same
+  `TileOwnerChanged` signal — real per-card art now, not a generic
+  placeholder marker, as long as the developer has placed one (falls back
+  to a `warn()` and no visual if a card has no matching Summons model yet).
+  Registers/cleans up Cepters, Magic balances, and turn rotation on
+  PlayerAdded/PlayerRemoving. `warn()`s if no tagged tiles are found at
+  boot (helps catch a forgotten tag/attribute during hand-authoring).
+
+  **Model authoring** (Cepter tokens + creature summons — this is the
+  developer's job now, not code-generated, per an explicit decision to stop
+  procedurally building placeholder geometry): place real Models under
+  `ReplicatedStorage > Models > Player` and `ReplicatedStorage > Models >
+  Summons` (in Studio directly, or via a plugin — `tools/create-model-folders.lua`
+  is a one-time Command Bar script that creates just the empty folder
+  scaffolding, not the models themselves). Contract Main.server.lua
+  actually reads:
+    - `Models.Player.PlayerTemplate` (Model) — a real R6 Character with a
+      `Humanoid` and a part literally named `HumanoidRootPart`. Cloned once
+      per joining player; `PrimaryPart` is set to that HumanoidRootPart on
+      clone. CameraService depends on that exact child name/part existing
+      to find its focus target's live position.
+    - `Models.Summons.<any name>` (Model) — one per creature card, matched
+      to `CardData` by a number **Attribute** named `CardId` set on the
+      Model itself (the Model's own instance *Name* can be anything
+      readable — the attribute is the actual lookup key). Same
+      attribute-driven pattern `BoardService` already uses for tile data,
+      kept consistent on purpose.
+  Every cloned model has all its `BasePart` descendants force-`Anchored`
+  (movement here is teleport/PivotTo, never physics-simulated, same as the
+  rest of the board) and is positioned via `Model:PivotTo`, not by setting
+  a single Part's `.Position` — this is what let the switch away from the
+  old block-rig/Neon-marker placeholders happen without needing a
+  Motor6D/joint rig of its own; PivotTo works on any Model regardless of
+  its internal joint structure. The 6 `*Request` RemoteEvents are
   handled here, each gated by `MatchService.IsPlayersTurn` (roll also
   checks `HasRolledThisTurn`) before calling into
   Movement/Battle/Economy/Terraform — `sendStateToPlayer`/
@@ -340,14 +368,17 @@ Systems built so far:
   Takes the camera fully `Scriptable` (no free-roam gameplay exists to lose
   by not using the default follow-avatar camera) and, on every
   `StateUpdated` push where `CurrentTurnUserId` changed, finds that
-  player's `"Cepter_"..userId` token under Workspace (plain replication,
-  visible to every client automatically — no camera-specific networking)
-  and tweens to an angled offset framing it. Also subscribes to that
-  token's own `Position` changes while focused on it, so the camera keeps
-  following live as the active player rolls/moves during their turn, not
-  just once at turn-start. Entirely decoupled from board geometry/data —
-  only ever reads a Cepter token's live Position, never tile data — so it
-  needed zero changes for the hand-authored-boards switch above.
+  player's `"Cepter_"..userId` token Model under Workspace (plain
+  replication, visible to every client automatically — no camera-specific
+  networking), then its `HumanoidRootPart` child specifically, and tweens
+  to an angled offset framing it. Also subscribes to that part's own
+  `Position` changes while focused on it, so the camera keeps following
+  live as the active player rolls/moves during their turn, not just once
+  at turn-start. Entirely decoupled from board geometry/data — only ever
+  reads a Cepter token's live Position, never tile data — so it needed
+  zero changes for the hand-authored-boards switch above, and only a
+  one-line lookup change (Part -> Model.HumanoidRootPart) for the real-R6
+  Cepter switch.
   Two non-obvious Roblox behaviors this had to work around, found by
   actually testing in Studio (both easy to hit again if this pattern gets
   reused elsewhere): (1) `Workspace.CurrentCamera` can be swapped for a
@@ -367,10 +398,13 @@ Systems built so far:
 
 Not yet built: match setup/lobby and 2v2 alliance mode (see MatchService's
 header for what's deferred there), persistence/DataStore layer, terraforming
-an owned tile (see TerraformService's header), final Cepter token/creature
-art (both are still plain-block placeholders — R6 stand-in rig and a single
-colored marker, respectively), and the rest of UIService (card hand, deck
-builder, actual visual design).
+an owned tile (see TerraformService's header), the actual `Models.Player`/
+`Models.Summons` content itself (Main.server.lua now clones/references
+whatever's placed there — see Main.server.lua's "Model authoring" entry
+above and `tools/create-model-folders.lua` — but no PlayerTemplate or
+per-card creature models have been authored yet, that's the developer's
+own Studio/plugin work, not something this session generates), and the
+rest of UIService (card hand, deck builder, actual visual design).
 
 ## Working style — how to respond (manual copy-paste sessions)
 

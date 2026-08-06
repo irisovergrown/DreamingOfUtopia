@@ -12,14 +12,33 @@
 		script does NOT spawn tiles, it just finds the ones already there
 		and attaches a BillboardGui label to each. Also registers each
 		joining player with MovementService (board position) and
-		EconomyService (Magic balance), and gives them a basic R6-shaped
-		stand-in rig (Torso/Head/Arms/Legs, plain blocks — a placeholder,
-		not final character art) that walks the board on move. Also spawns
-		a simple placeholder marker on a tile whenever a creature defends
-		it, so a claimed tile visibly has "something" guarding it instead
-		of just a label.
+		EconomyService (Magic balance), and gives them a Cepter token by
+		cloning a developer-authored model rather than building one from
+		Instance.new() — see "Model authoring" below. Also spawns a clone
+		of the matching creature model on a tile whenever it's defended, so
+		a claimed tile visibly has "something" guarding it instead of just
+		a label.
 		This is the wiring layer — it requires systems and connects their
 		Signals, but game systems still never require each other directly.
+
+		Model authoring (Cepter tokens + creature summons):
+			This script does NOT build character/creature geometry in code —
+			those are real models the developer places in Studio (by hand or
+			via plugins), under:
+				ReplicatedStorage > Models > Player > PlayerTemplate (Model)
+					A single R6 Character with a Humanoid and a part named
+					"HumanoidRootPart" — cloned once per joining player.
+					PrimaryPart is set to that HumanoidRootPart on clone.
+					CameraService depends on that exact child name to find
+					its focus target's position, so it must be present.
+				ReplicatedStorage > Models > Summons > <any name> (Model)
+					One Model per creature card, matched to CardData by a
+					number Attribute named "CardId" set on the Model itself
+					(the Model's own Name can be anything readable) — same
+					attribute-driven lookup pattern BoardService already
+					uses for tile data, kept consistent on purpose.
+			If a template/model is missing, the corresponding token/marker
+			is simply skipped with a warn() — nothing else breaks.
 
 		A tile Part's own color/material/model are entirely Studio-authored
 		by the developer (own board designs, not code-generated) — the only
@@ -59,26 +78,22 @@ MatchService.Init()
 
 local TILE_TAG = "Tile"
 
--- Basic R6-shaped stand-in rig: plain blocks, no mesh/art assets. Offsets
--- are relative to the Torso's own center; the Torso is the named
--- "Cepter_"..userId part everything else (CameraService included) looks
--- up, so those offsets are also how the other parts get repositioned
--- whenever the rig moves. ROOT_HEIGHT is how far above the tile surface
--- the Torso center sits, chosen so the Legs (the lowest parts) rest on it.
-local RIG_PART_DEFS = {
-	{ Name = "Torso", Shape = Enum.PartType.Block, Size = Vector3.new(2, 2, 1), Offset = Vector3.new(0, 0, 0) },
-	{ Name = "Head", Shape = Enum.PartType.Ball, Size = Vector3.new(1.2, 1.2, 1.2), Offset = Vector3.new(0, 1.6, 0) },
-	{ Name = "Left Arm", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(-1.5, 0, 0) },
-	{ Name = "Right Arm", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(1.5, 0, 0) },
-	{ Name = "Left Leg", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(-0.5, -2, 0) },
-	{ Name = "Right Leg", Shape = Enum.PartType.Block, Size = Vector3.new(1, 2, 1), Offset = Vector3.new(0.5, -2, 0) },
-}
-local RIG_ROOT_HEIGHT = 3
+-- Developer-authored model folders — see this file's header
+-- ("Model authoring") for the exact naming/attribute contract.
+local MODELS_FOLDER = ReplicatedStorage:WaitForChild("Models", 10)
+local PLAYER_MODELS_FOLDER = MODELS_FOLDER and MODELS_FOLDER:WaitForChild("Player", 10)
+local SUMMON_MODELS_FOLDER = MODELS_FOLDER and MODELS_FOLDER:WaitForChild("Summons", 10)
 
--- Simple placeholder marker for whichever creature is defending a tile —
--- a single colored block, not final creature art. Sized/positioned so it
--- rests on the tile surface, same convention as the Cepter rig.
-local DEFENDER_MARKER_SIZE = Vector3.new(2.5, 4, 2.5)
+if MODELS_FOLDER == nil then
+	warn("[DreamingOfUtopia] Main: ReplicatedStorage.Models not found — create Models > Player and Models > Summons and place your Cepter/creature models there (see this file's header comment).")
+end
+
+local PLAYER_TEMPLATE_NAME = "PlayerTemplate"
+
+-- How far above the tile surface the Cepter token's pivot (its
+-- HumanoidRootPart) sits — tunable to match whatever proportions the
+-- authored PlayerTemplate model actually has.
+local CEPTER_ROOT_HEIGHT = 3
 
 local cepterFolder = Instance.new("Folder")
 cepterFolder.Name = "Cepters"
@@ -138,7 +153,33 @@ local function getTileWorldPosition(tileId, radius)
 	return part.Position + Vector3.new(0, part.Size.Y / 2 + radius, 0)
 end
 
--- tileId -> the placeholder Part marking that tile's defending creature.
+-- Cloned models are teleport-positioned (PivotTo), never simulated —
+-- anchoring every part keeps them from falling/reacting to physics,
+-- matching the fully-anchored/teleport-based movement the rest of the
+-- board already uses.
+local function anchorAllParts(model)
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = true
+		end
+	end
+end
+
+-- Finds the Models.Summons Model whose "CardId" Attribute matches — see
+-- this file's header ("Model authoring") for the naming/attribute contract.
+local function findSummonModel(cardId)
+	if SUMMON_MODELS_FOLDER == nil then
+		return nil
+	end
+	for _, model in ipairs(SUMMON_MODELS_FOLDER:GetChildren()) do
+		if model:IsA("Model") and model:GetAttribute("CardId") == cardId then
+			return model
+		end
+	end
+	return nil
+end
+
+-- tileId -> the cloned creature Model marking that tile's defender.
 local defenderMarkers = {}
 
 local function updateDefenderMarker(tileId, newOwnerUserId)
@@ -158,15 +199,19 @@ local function updateDefenderMarker(tileId, newOwnerUserId)
 		return
 	end
 
-	local marker = Instance.new("Part")
+	local summonTemplate = findSummonModel(card.Id)
+	if summonTemplate == nil then
+		warn(string.format("[DreamingOfUtopia] Main: no Models.Summons model with CardId=%d (%s) — place one there (see this file's header).", card.Id, card.Name))
+		return
+	end
+
+	local marker = summonTemplate:Clone()
 	marker.Name = "Defender_" .. tileId
-	marker.Anchored = true
-	marker.CanCollide = false
-	marker.Size = DEFENDER_MARKER_SIZE
-	marker.Color = EraData.GetEra(card.Era).Color
-	marker.Material = Enum.Material.Neon
-	marker.Position = getTileWorldPosition(tileId, DEFENDER_MARKER_SIZE.Y / 2)
+	anchorAllParts(marker)
 	marker.Parent = defenderFolder
+
+	local _, size = marker:GetBoundingBox()
+	marker:PivotTo(CFrame.new(getTileWorldPosition(tileId, size.Y / 2)))
 
 	defenderMarkers[tileId] = marker
 end
@@ -268,53 +313,48 @@ BoardService.EraChanged:Connect(function(tileId, newEra)
 	refreshAllPlayerStates()
 end)
 
--- Cepter tokens: one basic R6-shaped stand-in rig per player, walking the
--- board as MovementService moves them. `cepterTokens` holds each player's
--- named Torso part (the one CameraService and everything else looks up as
--- "Cepter_"..userId); `cepterRigParts` holds the rest of that rig (Head/
--- Arms/Legs) so movement can reposition them all in lockstep.
+-- Cepter tokens: one clone of Models.Player.PlayerTemplate per player,
+-- walking the board as MovementService moves them. `cepterTokens` holds
+-- each player's cloned Model, named "Cepter_"..userId — the exact name/
+-- BasePart-child contract CameraService looks up (its HumanoidRootPart
+-- child specifically, for position tracking).
 local cepterTokens = {}
-local cepterRigParts = {}
 
 local function createCepterToken(player)
-	local color = BrickColor.Random().Color
-	local basePosition = getTileWorldPosition(MovementService.GetCurrentTile(player), RIG_ROOT_HEIGHT)
-	local extraParts = {}
-
-	for _, def in ipairs(RIG_PART_DEFS) do
-		local part = Instance.new("Part")
-		part.Shape = def.Shape
-		part.Size = def.Size
-		part.Anchored = true
-		part.CanCollide = false
-		part.Color = color
-		part.Position = basePosition + def.Offset
-		part.Parent = cepterFolder
-
-		if def.Name == "Torso" then
-			part.Name = "Cepter_" .. player.UserId
-			cepterTokens[player.UserId] = part
-		else
-			part.Name = def.Name
-			table.insert(extraParts, { Part = part, Offset = def.Offset })
-		end
-	end
-
-	cepterRigParts[player.UserId] = extraParts
-end
-
-local function moveCepterRig(player, tileId)
-	local torso = cepterTokens[player.UserId]
-	if torso == nil then
+	if PLAYER_MODELS_FOLDER == nil then
 		return
 	end
 
-	local basePosition = getTileWorldPosition(tileId, RIG_ROOT_HEIGHT)
-	torso.Position = basePosition
-
-	for _, entry in ipairs(cepterRigParts[player.UserId] or {}) do
-		entry.Part.Position = basePosition + entry.Offset
+	local template = PLAYER_MODELS_FOLDER:FindFirstChild(PLAYER_TEMPLATE_NAME)
+	if template == nil or not template:IsA("Model") then
+		warn("[DreamingOfUtopia] Main: no '" .. PLAYER_TEMPLATE_NAME .. "' Model found under Models.Player — see this file's header.")
+		return
 	end
+
+	local model = template:Clone()
+	model.Name = "Cepter_" .. player.UserId
+
+	local humanoidRootPart = model:FindFirstChild("HumanoidRootPart")
+	if humanoidRootPart == nil or not humanoidRootPart:IsA("BasePart") then
+		warn("[DreamingOfUtopia] Main: '" .. PLAYER_TEMPLATE_NAME .. "' has no HumanoidRootPart — CameraService and movement both depend on it.")
+		model:Destroy()
+		return
+	end
+
+	model.PrimaryPart = humanoidRootPart
+	anchorAllParts(model)
+	model.Parent = cepterFolder
+	model:PivotTo(CFrame.new(getTileWorldPosition(MovementService.GetCurrentTile(player), CEPTER_ROOT_HEIGHT)))
+
+	cepterTokens[player.UserId] = model
+end
+
+local function moveCepterToken(player, tileId)
+	local model = cepterTokens[player.UserId]
+	if model == nil then
+		return
+	end
+	model:PivotTo(CFrame.new(getTileWorldPosition(tileId, CEPTER_ROOT_HEIGHT)))
 end
 
 local function onPlayerAdded(player)
@@ -334,15 +374,11 @@ local function onPlayerRemoving(player)
 		token:Destroy()
 		cepterTokens[player.UserId] = nil
 	end
-	for _, entry in ipairs(cepterRigParts[player.UserId] or {}) do
-		entry.Part:Destroy()
-	end
-	cepterRigParts[player.UserId] = nil
 	refreshAllPlayerStates()
 end
 
 MovementService.CepterMoved:Connect(function(player, _fromTileId, toTileId)
-	moveCepterRig(player, toTileId)
+	moveCepterToken(player, toTileId)
 	sendStateToPlayer(player)
 end)
 

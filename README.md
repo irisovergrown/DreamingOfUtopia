@@ -34,9 +34,27 @@ its ClassName/type as stated, paste the body (the file minus the type may
 already be code — headers are plain `--[[ ]]` comments and paste in fine as-is).
 
 `tools/` holds one-time Studio Command Bar utility scripts, not part of the
-runtime game — currently `recreate-placeholder-board.lua`, which recreates
-the old procedural 16-tile loop as real tagged/attributed Parts (a starting
-point for hand-editing, see "Board authoring" below).
+runtime game — `recreate-placeholder-board.lua`, which recreates the old
+procedural 16-tile loop as real tagged/attributed Parts (a starting point
+for hand-editing, see "Board authoring" below), and
+`create-model-folders.lua`, which creates the empty `Models.Player`/
+`Models.Summons` folder scaffolding (see "Model authoring" below).
+
+## Model authoring
+
+Cepter tokens and creature summons are real, developer-authored models —
+not code-generated. Place them under:
+
+- `ReplicatedStorage > Models > Player > PlayerTemplate` (Model) — a real
+  R6 Character with a `Humanoid` and a part named `HumanoidRootPart`.
+  Cloned once per joining player.
+- `ReplicatedStorage > Models > Summons > <any name>` (Model) — one per
+  creature card, matched to `CardData` by a number Attribute named
+  `CardId` set on the Model itself.
+
+`Main.server.lua` clones whichever model matches and positions it with
+`Model:PivotTo` — it never builds character/creature geometry in code. If a
+template is missing it just skips that token/marker with a `warn()`.
 
 ## Board authoring
 
@@ -72,11 +90,12 @@ Command Bar for a working starting layout to edit from.
 - `Shared/Remotes` — client-server RemoteEvent bridge (Roll/Summon/Challenge/
   PayToll/EndTurn/Terraform requests, StateUpdated/ActionResult pushes)
 - `Main.server.lua` — bootstrap: finds hand-placed tiles (doesn't spawn
-  them), spawns a basic R6-shaped stand-in rig per player (plain blocks,
-  not final art) and a single colored marker per claimed tile for its
-  defending creature, wires Board/Movement/Battle/Economy/Match signals to
-  visuals and per-player state pushes over Remotes, gates the 6 action
-  RemoteEvents on MatchService's turn checks
+  them), clones a developer-authored Cepter token per player and a
+  matching creature model per claimed tile's defender (see "Model
+  authoring" above — it never builds this geometry in code), wires
+  Board/Movement/Battle/Economy/Match signals to visuals and per-player
+  state pushes over Remotes, gates the 6 action RemoteEvents on
+  MatchService's turn checks
 - `StarterPlayer/UIService.client.lua` — deliberately plain HUD (standard
   Roblox gray panel, default font, no color theme — turn indicator,
   balance, tile info, card-id + era-id inputs, Roll/Summon/Challenge/Pay

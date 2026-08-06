@@ -13,14 +13,16 @@
 		(Remotes.StateUpdated's CurrentTurnUserId), so everyone sees the
 		same thing at the same time without any camera-specific networking.
 
-		Finds its target by reading the Cepter token Part Main.server.lua
-		already spawns under Workspace ("Cepter_"..userId) — Workspace
-		replicates to every client automatically, so no new server data is
-		needed beyond the turn's userId. Once focused on a token, it
-		listens to that token's own Position changes (also just normal
-		replication, no new networking) so the camera keeps following it
-		live as that player rolls and moves during their turn, not just
-		once at turn-start.
+		Finds its target by reading the Cepter token Model Main.server.lua
+		clones under Workspace ("Cepter_"..userId, from a developer-authored
+		R6 Character+Humanoid template under ReplicatedStorage.Models.Player
+		— see Main.server.lua's header) — Workspace replicates to every
+		client automatically, so no new server data is needed beyond the
+		turn's userId. Once focused on a token, it reads its
+		HumanoidRootPart child specifically and listens to that part's own
+		Position changes (also just normal replication, no new networking)
+		so the camera keeps following it live as that player rolls and
+		moves during their turn, not just once at turn-start.
 
 		Decoupled from board geometry entirely: works the same whether
 		tiles are procedural or hand-placed (see BoardService/Main.server.lua)
@@ -113,18 +115,18 @@ local function focusOn(targetPosition, instant)
 	currentTween:Play()
 end
 
-local function trackToken(token)
+local function trackToken(rootPart)
 	if currentPositionConnection ~= nil then
 		currentPositionConnection:Disconnect()
 		currentPositionConnection = nil
 	end
 
-	if token == nil then
+	if rootPart == nil then
 		return
 	end
 
-	currentPositionConnection = token:GetPropertyChangedSignal("Position"):Connect(function()
-		focusOn(token.Position, false)
+	currentPositionConnection = rootPart:GetPropertyChangedSignal("Position"):Connect(function()
+		focusOn(rootPart.Position, false)
 	end)
 end
 
@@ -148,7 +150,13 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 		return
 	end
 
+	local rootPart = token:WaitForChild("HumanoidRootPart", 5)
+	if rootPart == nil then
+		warn("[DreamingOfUtopia] CameraService: Cepter_" .. turnUserId .. " has no HumanoidRootPart")
+		return
+	end
+
 	print("[DreamingOfUtopia] CameraService focusing on Cepter_" .. turnUserId)
-	trackToken(token)
-	focusOn(token.Position, false)
+	trackToken(rootPart)
+	focusOn(rootPart.Position, false)
 end)
