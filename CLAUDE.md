@@ -337,6 +337,22 @@ Systems built so far:
   just once at turn-start. Entirely decoupled from board geometry/data —
   only ever reads a Cepter token's live Position, never tile data — so it
   needed zero changes for the hand-authored-boards switch above.
+  Two non-obvious Roblox behaviors this had to work around, found by
+  actually testing in Studio (both easy to hit again if this pattern gets
+  reused elsewhere): (1) `Workspace.CurrentCamera` can be swapped for a
+  brand-new Camera instance around character spawn, so a reference grabbed
+  once at script start can go stale — re-acquired on every
+  `CurrentCamera` property change, not just once. (2) Roblox's own default
+  camera control script (present in every place, not something this
+  project added) keeps re-asserting `CameraType = Custom` on its own even
+  after this script sets `Scriptable`, which snapped the view back to
+  following the character — fixed by re-claiming `Scriptable` every
+  `RenderStepped` frame instead of only reacting to changes. Token lookup
+  also uses `WaitForChild` with a timeout, not a one-shot `FindFirstChild`
+  — the server fires `StateUpdated` right after creating a new Cepter
+  token, but instance replication and RemoteEvent delivery aren't
+  guaranteed to arrive in that order, so the token can genuinely not exist
+  on the client yet for a brief moment.
 
 Not yet built: match setup/lobby and 2v2 alliance mode (see MatchService's
 header for what's deferred there), persistence/DataStore layer, terraforming
