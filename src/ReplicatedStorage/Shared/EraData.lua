@@ -5,44 +5,48 @@
 		ReplicatedStorage > Shared > EraData (ModuleScript)
 
 	Purpose:
-		Single source of truth for the "element/color" system — retrofuturism
-		eras standing in for Culdcept's classical elements. Board tiles,
-		creature cards, and chain bonuses all key off the era ids defined
-		here. The era roster is deliberately NOT hardcoded to 4 — add a new
-		entry to Eras below and every system that reads this table (board
-		rendering, chain calculation, deck filters, etc.) picks it up
-		without other code changes.
+		Single source of truth for the "element/color" system — the classic
+		four elements (Fire, Air, Earth, Water), which is what board tiles,
+		creature cards, and chain bonuses actually key off. Each element is
+		additionally skinned in one distinct retrofuturism "era" for visual/
+		creature flavor only (DisplayName/Color below carry that flavor) —
+		the era is a skin, the element key is the mechanic. Fixed at these 4
+		by design decision; the roster used to be open-ended back when eras
+		themselves were the element system (see CLAUDE.md), that's no longer
+		the case now that eras are a flavor layer instead.
 
 	Usage:
 		local EraData = require(game:GetService("ReplicatedStorage").Shared.EraData)
-		local era = EraData.Eras["CassetteFuturism"]
+		local era = EraData.Eras["Fire"]
 		print(era.DisplayName, era.Color)
 ]]
 
 local EraData = {}
 
--- Placeholder colors for greybox/visualization purposes only — not final art direction.
+-- Placeholder colors for greybox/visualization purposes only — not final art
+-- direction. Each element keeps its retrofuturism-era skin's color identity:
+-- Fire = Laser Grid, Air = Early Cyber, Earth = Cassette Futurism, Water = Frutiger Aero.
 EraData.Eras = {
-	CassetteFuturism = {
-		DisplayName = "Cassette Futurism",
-		Color = Color3.fromRGB(196, 172, 130), -- beige plastic / analog tape
+	Fire = {
+		DisplayName = "Fire",
+		Color = Color3.fromRGB(255, 45, 185), -- Laser Grid: neon grid / chrome airbrush
 	},
-	LaserGrid = {
-		DisplayName = "Laser Grid",
-		Color = Color3.fromRGB(255, 45, 185), -- neon grid / chrome airbrush
+	Air = {
+		DisplayName = "Air",
+		Color = Color3.fromRGB(60, 255, 130), -- Early Cyber: phosphor-green terminal
 	},
-	EarlyCyber = {
-		DisplayName = "Early Cyber",
-		Color = Color3.fromRGB(60, 255, 130), -- phosphor-green terminal
+	Earth = {
+		DisplayName = "Earth",
+		Color = Color3.fromRGB(196, 172, 130), -- Cassette Futurism: beige plastic / analog tape
 	},
-	FrutigerAero = {
-		DisplayName = "Frutiger Aero",
-		Color = Color3.fromRGB(110, 210, 255), -- glossy blue/green aqua
+	Water = {
+		DisplayName = "Water",
+		Color = Color3.fromRGB(110, 210, 255), -- Frutiger Aero: glossy blue/green aqua
 	},
 }
 
--- Neutral is not an era players can build chains in — it's the Start tile /
--- unclaimed default, kept separate from Eras so era-only iteration works.
+-- Neutral is not an element players can build chains in — it's the Start tile /
+-- unclaimed default, kept separate from Eras so element-only iteration works.
 EraData.Neutral = {
 	DisplayName = "Neutral",
 	Color = Color3.fromRGB(230, 225, 210),

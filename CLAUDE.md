@@ -39,28 +39,34 @@ community formula sheets for an older console game, not our own spec yet.
 
 ## Theme & setting
 
-Instead of classical elements (Fire/Water/Earth/Air), the "element/color"
-system is built from retrofuturism eras — different "perceptions of the
-future," a.k.a. utopias. Each era functions mechanically like a Culdcept
-color (has its own tiles, chains, creature aesthetic).
+The element/color system uses the classic four elements — **Fire, Air,
+Earth, Water** — mechanically identical to a Culdcept color (its own tiles,
+chains, creature typing). This reverts an earlier pivot where retrofuturism
+eras stood in as the elements themselves; that retrofuturism identity
+didn't go away, it moved down a layer. Each element is now *skinned* in one
+distinct retrofuturism era for visual/creature flavor only, not as the
+mechanical unit — the era is flavor, the element is the mechanic.
 
-Confirmed eras so far:
+Element → era skin mapping:
 
-- **Cassette Futurism** — beige plastic, tape reels, analog-optimism
-  (Nostromo-computer energy) [REPLACED EARTH]
-- **Laser Grid** — the glossy 1980s corporate future: neon grids, reflective
-  glass, chrome airbrushing, robots, glass-block offices, high-tech luxury.
-  [REPLACED FIRE]
-- **Early Cyber** — Tron-grid, phosphor-green terminal, digital-frontier
-  utopianism [REPLACED AIR]
-- **Frutiger Aero** — glossy blue/green, translucent plastic, dew-drop/
-  nature-tech optimism (mid-2000s "aqua" web look) [REPLACED WATER]
-- More eras may be added later — **keep the system open to expansion**,
-  don't hardcode a fixed count of 4.
+- **Fire** = **Laser Grid** — the glossy 1980s corporate future: neon
+  grids, reflective glass, chrome airbrushing, robots, glass-block offices,
+  high-tech luxury.
+- **Air** = **Early Cyber** — Tron-grid, phosphor-green terminal,
+  digital-frontier utopianism.
+- **Earth** = **Cassette Futurism** — beige plastic, tape reels,
+  analog-optimism (Nostromo-computer energy).
+- **Water** = **Frutiger Aero** — glossy blue/green, translucent plastic,
+  dew-drop/nature-tech optimism (mid-2000s "aqua" web look).
 
-Keep Y2K and Frutiger Aero visually distinct: Y2K = hard/chrome/silver;
-Frutiger Aero = glossy/translucent/organic. They're adjacent eras and will
-blend together if not deliberately separated.
+Fixed at these 4 by design decision — the era roster used to be explicitly
+open-ended ("don't hardcode a fixed count"); that no longer applies now
+that eras are a flavor skin on a classic 4-element mechanic rather than
+being the element system itself.
+
+Keep Y2K and Frutiger Aero (Water's skin) visually distinct: Y2K =
+hard/chrome/silver; Frutiger Aero = glossy/translucent/organic. They're
+adjacent aesthetics and will blend together if not deliberately separated.
 
 Visual direction overall: nostalgic, retrofuturist, produced under the
 in-fiction studio banner "Ninth Signal."
@@ -96,11 +102,10 @@ in-fiction studio banner "Ninth Signal."
 
 ## Still undecided / open
 
-- Deeper mechanical identity per era beyond naming (what makes a Cyber
-  creature play differently from a Cassette Futurism one, if anything)
+- Deeper mechanical identity per element beyond naming (what makes a Fire
+  creature play differently from an Earth one, if anything)
 - Actual card list/content
 - Economy/balance tuning numbers
-- Whether more than 4 eras ship at launch
 
 ## System architecture requirements — non-negotiable
 
@@ -181,9 +186,12 @@ Systems built so far:
 - **`Shared/Signal`** (ModuleScript) — lightweight pub/sub event object.
   The cross-system communication layer; every service fires/listens on
   `Signal` instances instead of calling other systems' internals.
-- **`Shared/EraData`** (ModuleScript) — registry of retrofuturism eras
-  (display name + placeholder color per era). Open-ended by design — add an
-  entry, every system that reads it picks up the new era automatically.
+- **`Shared/EraData`** (ModuleScript) — registry of the classic four
+  elements (Fire/Air/Earth/Water), each carrying a display name and
+  placeholder color that reflects its retrofuturism-era flavor skin (Fire=
+  Laser Grid, Air=Early Cyber, Earth=Cassette Futurism, Water=Frutiger
+  Aero — see "Theme & setting"). Fixed at 4 by design decision, not
+  open-ended (was, back when eras were the element system itself).
 - **`Systems/BoardService`** (ModuleScript, server) — authoritative owner
   of the board itself, now **hand-authored**: tiles are Parts placed
   directly in Workspace by the developer (own board designs, not
@@ -223,9 +231,12 @@ Systems built so far:
   drive BattleService from the client HUD instead), and `LapCompleted`
   (passed Start — hook point for the lap bonus once EconomyService exists).
 - **`Shared/CardData`** (ModuleScript) — static registry of Creature/Spell/
-  Item cards. Small placeholder set (one creature per confirmed era, one
-  generic spell, one generic item) — not the real 60-80 card launch
-  library, which is still open per the brief.
+  Item cards. Small placeholder set (one creature per element, one generic
+  spell, one generic item) — not the real 60-80 card launch library, which
+  is still open per the brief. Creature names pair the classic element with
+  its retrofuturism-era skin and a nod to the traditional Paracelsian
+  elemental archetype (Tape Gnome=Earth, Laser Salamander=Fire, Phosphor
+  Sylph=Air, Dewdrop Undine=Water) — flavor only, no mechanical effect.
 - **`Systems/CardService`** (ModuleScript, server) — query API over
   CardData (`GetCard`, `GetAllCards`, `GetCardsByType`, `GetCardsByEra`).
   Deliberately no hand/deck/unlock state yet — that needs MatchService's

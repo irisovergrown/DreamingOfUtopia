@@ -70,7 +70,8 @@ Command Bar for a working starting layout to edit from.
 ## Current systems
 
 - `Shared/Signal` — cross-system pub/sub event object
-- `Shared/EraData` — retrofuturism era registry (colors, display names)
+- `Shared/EraData` — classic four-element registry (Fire/Air/Earth/Water),
+  each skinned in a retrofuturism era for flavor (colors, display names)
 - `Systems/BoardService` — hand-authored board registry (scans
   CollectionService-tagged tiles), ownership/level/era state, tile value &
   toll formulas

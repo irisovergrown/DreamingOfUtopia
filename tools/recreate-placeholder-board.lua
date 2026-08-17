@@ -23,30 +23,30 @@ local CollectionService = game:GetService("CollectionService")
 local Workspace = game:GetService("Workspace")
 
 local ERA_COLORS = {
-	CassetteFuturism = Color3.fromRGB(196, 172, 130),
-	LaserGrid = Color3.fromRGB(255, 45, 185),
-	EarlyCyber = Color3.fromRGB(60, 255, 130),
-	FrutigerAero = Color3.fromRGB(110, 210, 255),
+	Earth = Color3.fromRGB(196, 172, 130),
+	Fire = Color3.fromRGB(255, 45, 185),
+	Air = Color3.fromRGB(60, 255, 130),
+	Water = Color3.fromRGB(110, 210, 255),
 }
 local NEUTRAL_COLOR = Color3.fromRGB(230, 225, 210)
 
 local TILES = {
 	{ Id = 1, X = -20, Z = -20, Era = nil, TileType = "Start", BaseValue = 0 },
-	{ Id = 2, X = -10, Z = -20, Era = "CassetteFuturism", TileType = "Property" },
-	{ Id = 3, X = 0, Z = -20, Era = "LaserGrid", TileType = "Property" },
-	{ Id = 4, X = 10, Z = -20, Era = "EarlyCyber", TileType = "Property" },
-	{ Id = 5, X = 20, Z = -20, Era = "FrutigerAero", TileType = "Property" },
-	{ Id = 6, X = 20, Z = -10, Era = "CassetteFuturism", TileType = "Property" },
-	{ Id = 7, X = 20, Z = 0, Era = "LaserGrid", TileType = "Property" },
-	{ Id = 8, X = 20, Z = 10, Era = "EarlyCyber", TileType = "Property" },
-	{ Id = 9, X = 20, Z = 20, Era = "FrutigerAero", TileType = "Property" },
-	{ Id = 10, X = 10, Z = 20, Era = "CassetteFuturism", TileType = "Property" },
-	{ Id = 11, X = 0, Z = 20, Era = "LaserGrid", TileType = "Property" },
-	{ Id = 12, X = -10, Z = 20, Era = "EarlyCyber", TileType = "Property" },
-	{ Id = 13, X = -20, Z = 20, Era = "FrutigerAero", TileType = "Property" },
-	{ Id = 14, X = -20, Z = 10, Era = "CassetteFuturism", TileType = "Property" },
-	{ Id = 15, X = -20, Z = 0, Era = "LaserGrid", TileType = "Property" },
-	{ Id = 16, X = -20, Z = -10, Era = "EarlyCyber", TileType = "Property" },
+	{ Id = 2, X = -10, Z = -20, Era = "Earth", TileType = "Property" },
+	{ Id = 3, X = 0, Z = -20, Era = "Fire", TileType = "Property" },
+	{ Id = 4, X = 10, Z = -20, Era = "Air", TileType = "Property" },
+	{ Id = 5, X = 20, Z = -20, Era = "Water", TileType = "Property" },
+	{ Id = 6, X = 20, Z = -10, Era = "Earth", TileType = "Property" },
+	{ Id = 7, X = 20, Z = 0, Era = "Fire", TileType = "Property" },
+	{ Id = 8, X = 20, Z = 10, Era = "Air", TileType = "Property" },
+	{ Id = 9, X = 20, Z = 20, Era = "Water", TileType = "Property" },
+	{ Id = 10, X = 10, Z = 20, Era = "Earth", TileType = "Property" },
+	{ Id = 11, X = 0, Z = 20, Era = "Fire", TileType = "Property" },
+	{ Id = 12, X = -10, Z = 20, Era = "Air", TileType = "Property" },
+	{ Id = 13, X = -20, Z = 20, Era = "Water", TileType = "Property" },
+	{ Id = 14, X = -20, Z = 10, Era = "Earth", TileType = "Property" },
+	{ Id = 15, X = -20, Z = 0, Era = "Fire", TileType = "Property" },
+	{ Id = 16, X = -20, Z = -10, Era = "Air", TileType = "Property" },
 }
 
 local folder = Workspace:FindFirstChild("Board") or Instance.new("Folder")

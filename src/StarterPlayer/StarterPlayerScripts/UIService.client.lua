@@ -26,7 +26,7 @@
 		turn, though they're still clickable; the server is what actually
 		enforces turn order, this is just a visual cue.
 
-		Terraform takes a raw era id typed into EraBox (e.g. "LaserGrid",
+		Terraform takes a raw era id typed into EraBox (e.g. "Fire",
 		matching an EraData.Eras key — see the legend) rather than a picker;
 		blank means neutral. Only works on unclaimed tiles — see
 		TerraformService's header for why owned tiles aren't supported yet.

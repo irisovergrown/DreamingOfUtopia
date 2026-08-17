@@ -18,8 +18,9 @@
 			                               inferable from spatial position,
 			                               so this can't be skipped.
 			TileType  (string, REQUIRED)  "Start" or "Property"
-			Era       (string, optional)  must match an EraData.Eras key,
-			                               or leave blank for neutral/Start
+			Era       (string, optional)  must match an EraData.Eras key
+			                               (Fire/Air/Earth/Water), or leave
+			                               blank for neutral/Start
 			BaseValue (number, optional)  defaults to 0 for Start, 100 for
 			                               Property if unset
 		A tile missing Id is skipped with a warning — everything else about
