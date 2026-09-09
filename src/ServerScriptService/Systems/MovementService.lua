@@ -78,6 +78,19 @@ function MovementService.GetLapCount(player)
 	return state and state.LapCount or 0
 end
 
+-- userId variants. SnapshotService builds standings for every participant
+-- from ids alone and has no Player instance to hand, and a Player object is
+-- the wrong thing to require of code that only knows who someone is.
+function MovementService.GetCurrentTileByUserId(userId)
+	local state = _cepterState[userId]
+	return state and state.CurrentTileId
+end
+
+function MovementService.GetLapCountByUserId(userId)
+	local state = _cepterState[userId]
+	return state and state.LapCount or 0
+end
+
 function MovementService.RollDice(diceCount)
 	diceCount = diceCount or 1
 

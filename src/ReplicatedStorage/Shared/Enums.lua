@@ -224,6 +224,37 @@ Enums.TimingHook = makeEnum("TimingHook", {
 	"RoundEnd",
 })
 
+-- What a client may ask the server to do. Requests are intent-shaped: the
+-- client states what it wants, never what the outcome is. Each intent is
+-- legal in a specific set of phases (see ActionValidator).
+Enums.Intent = makeEnum("Intent", {
+	"DiscardToHandLimit",
+	"CastSpell",
+	"SkipSpell",
+	"ChooseSpellTarget",
+	"Roll",
+	"ChooseJunction",
+	"ChoosePassEffect",
+	"ChooseLandingAction",
+	"ChooseSummon",
+	"ChooseBattleItem",
+	"ChooseTerritoryCommand",
+	"PayToll",
+	"ChooseLiquidation",
+	"ConfirmResult",
+	"EndTurn",
+})
+
+-- Who is expected to act in a given phase. Not everything is the active
+-- player: the defender chooses a battle item after the invader has committed,
+-- and most phases are server-driven with no player input at all.
+Enums.Actor = makeEnum("Actor", {
+	"ActivePlayer",
+	"Defender",
+	"AnyParticipant",
+	"None",
+})
+
 -- Whether a status/hand/book detail is visible to opponents.
 Enums.Visibility = makeEnum("Visibility", {
 	"Public",
