@@ -350,6 +350,32 @@ Systems built so far:
   beyond "the tile you're standing on", which is what UIService's
   `TargetTileBox` feeds. An invalid item target refunds the Magic already
   spent rather than eating it.
+- **`Shared/PhaseGraph`** (ModuleScript) — the legal phase transition table,
+  as data. States which transitions exist; MatchOrchestrator decides when to
+  take them. A move not listed cannot happen. Several rules are enforced
+  structurally here rather than by convention: movement never self-loops (a
+  junction leaves and returns, so remaining steps stay owned by one
+  transaction), `AttackerItemChoice -> DefenderItemChoice` is the only route
+  between them (Saga's sequential item order), `TollResolution ->
+  Liquidation` exists because an unaffordable payment liquidates rather than
+  being rejected, and Doublecast is an ordinary `SpellResolution ->
+  SpellChoice` edge rather than a card-name special case.
+- **`Systems/MatchLogService`** (ModuleScript, server) — append-only ordered
+  event record with monotonic indices. Entries are frozen; a log a service
+  can retroactively edit is not evidence. Capped at `MaxEntries`, dropping
+  oldest-first and **counting the drops**, so "nothing happened before index
+  400" stays distinguishable from "the first 400 were discarded".
+- **`Systems/MatchOrchestrator`** (ModuleScript, server) — **the sole
+  phase-transition authority**. Nothing else may change the phase. Owns
+  phase, active player, turn/round counters and per-player intent
+  sequencing; logs every accepted and rejected move. Intents carry a
+  monotonic sequence number so a double-click or replayed packet is refused
+  as `DuplicateSequence`/`StaleSequence` — and a **rejected intent does not
+  consume its ordinal**, or being refused once would knock a client's
+  numbering permanently out of step. Every rejection path returns before
+  touching any state; the tests assert "failed AND nothing moved", not just
+  that the call failed. Does **not** yet decide which actions are legal
+  within a phase — that is ActionValidator's job and it does not exist yet.
 - **`Systems/RandomService`** (ModuleScript, server) — the only source of
   randomness in a match, so a test can pin a seed and replay deterministically.
   Deliberately **not** Roblox's `Random`: that generator's algorithm is
