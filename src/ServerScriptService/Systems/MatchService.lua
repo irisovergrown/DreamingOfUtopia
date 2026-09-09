@@ -4,7 +4,24 @@
 	Studio placement:
 		ServerScriptService > Systems > MatchService (ModuleScript)
 
-	Purpose:
+	SUPERSEDED (Milestone 1) — do not add callers.
+		MatchOrchestrator now owns phase, active player, turn/round counters
+		and the participant rotation, and Main.server.lua no longer uses this
+		module at all. Turn authority moved because "whose turn is it" and
+		"what phase are we in" must agree, and two modules each holding half
+		of that is exactly how they silently diverge.
+
+		Specifically superseded: GetCurrentTurnPlayer, IsPlayersTurn,
+		HasRolledThisTurn, MarkRolled, EndTurn, RegisterPlayer/RemovePlayer.
+		Calling them will not error, but they read a rotation nothing
+		maintains any more, so their answers are stale.
+
+		Still unclaimed by another module: GetTeam/AreAllies (the 2v2 seam,
+		Milestone 8) and the WinTargetReached subscription (moving to
+		VictoryService in Milestone 5). This module is deleted once those two
+		have homes.
+
+	Purpose (as originally written):
 		Turn order and match-end lifecycle. Registered players rotate in
 		join order; only the current turn holder may roll (once per turn —
 		EndTurn resets that) or take a Battle/Economy action. Main.server.lua

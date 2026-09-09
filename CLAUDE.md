@@ -376,6 +376,27 @@ Systems built so far:
   touching any state; the tests assert "failed AND nothing moved", not just
   that the call failed. Does **not** yet decide which actions are legal
   within a phase — that is ActionValidator's job and it does not exist yet.
+- **`Systems/ActionValidator`** (ModuleScript, server) — answers both "may
+  this request proceed" and "what may I do now" from one table, so the
+  buttons a client offers and the requests the server accepts cannot drift.
+  Each phase names its expected **Actor**, and it is deliberately not always
+  the active player: `DefenderItemChoice` belongs to the **defender**, since
+  the invader commits an item first. Phases with `Actor = None` are
+  server-driven and refuse every request. Validates *admissibility* only
+  (right phase, right actor, known intent) — affordability and targeting are
+  checked where the payment happens.
+- **`Systems/SnapshotService`** (ModuleScript, server) — builds the
+  per-player view. A **public** portion every client receives identically
+  (phase, turn, standings, hand **counts**) and a **private** `You` section
+  only its recipient gets (balance, legal intents, and `Hand`, empty until
+  Milestone 3). The split exists before hands do on purpose: secrecy built
+  into the only path state takes to a client holds by construction, whereas
+  secrecy retrofitted later is a leak hunt.
+- **`Systems/BoardVisualService`** (ModuleScript, server) — everything the
+  board *looks* like: tile labels, ownership material flip, element recolour,
+  Cepter tokens, defender models. Split out of Main. Decides nothing;
+  deleting it would leave a headless but fully correct match, which is the
+  test of whether the split is real.
 - **`Systems/RandomService`** (ModuleScript, server) — the only source of
   randomness in a match, so a test can pin a seed and replay deterministically.
   Deliberately **not** Roblox's `Random`: that generator's algorithm is
@@ -561,8 +582,25 @@ features — it is that every phase, choice, rule exception, timing window and
 resource change has a named owner, an input contract, a resolution order and
 a test.
 
-Milestones, in order: **M0 safety net and schemas** (done), M1 match/turn
-state machine, M2 graph movement, M3 book/hand/card lifecycle, M4 landing and
+**Milestone 1 is complete.** A turn now runs `TurnStart -> Draw ->
+SpellChoice -> RollReady -> DiceResolution -> Movement -> LandingResolution
+-> LandingActionChoice -> TurnEnd -> VictoryCheck -> (RoundEnd) -> TurnStart`,
+driven by MatchOrchestrator. Draw and SpellChoice are *traversed, not
+skipped*: there is no book until Milestone 3, but the phases are real,
+logged, and already in the right place for it.
+
+The eight action-shaped RemoteEvents collapsed into one intent-shaped
+`SubmitIntent(intent, sequence, expectedPhase, payload)`. One channel means
+one validation path — every request passes orchestrator admissibility, then
+expected-phase agreement, then ActionValidator, before reaching a service.
+The old shape had a hand-written turn check per remote and they had already
+drifted: `EndTurnRequest` was the one handler that forgot to check whose turn
+it was. `expectedPhase` turns a race into a clean rejection: a player who
+clicks a screen the server has moved past gets `StaleSequence` rather than an
+action applied in the wrong phase.
+
+Milestones, in order: **M0 safety net and schemas** (done), **M1 match/turn
+state machine** (done), M2 graph movement, M3 book/hand/card lifecycle, M4 landing and
 battle, M5 territory and full economy, M6 card/status/special-node engine,
 M7 content and presentation, M8 secondary-system skeletons. Build a complete
 local match before matchmaking, campaign or monetization; those get interfaces

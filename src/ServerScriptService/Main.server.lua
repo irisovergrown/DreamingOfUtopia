@@ -1,567 +1,412 @@
 --[[
-	Script — server, standalone bootstrap / composition root.
+	Script — server, bootstrap / composition root.
 
 	Studio placement:
 		ServerScriptService > Main (Script)
 
 	Purpose:
-		First thing that runs when the place starts. Initializes
-		BoardService, which builds its tile registry from hand-placed,
-		CollectionService-tagged Parts already sitting in Workspace (see
-		BoardService's header for the tagging/attribute scheme) — this
-		script does NOT spawn tiles, it just finds the ones already there
-		and attaches a BillboardGui label to each. Also registers each
-		joining player with MovementService (board position) and
-		EconomyService (Magic balance), and gives them a Cepter token by
-		cloning a developer-authored model rather than building one from
-		Instance.new() — see "Model authoring" below. Also spawns a clone
-		of the matching creature model on a tile whenever it's defended, so
-		a claimed tile visibly has "something" guarding it instead of just
-		a label.
-		This is the wiring layer — it requires systems and connects their
-		Signals, but game systems still never require each other directly.
+		Starts the match and drives the turn through MatchOrchestrator.
 
-		Model authoring (Cepter tokens + creature summons):
-			This script does NOT build character/creature geometry in code —
-			those are real models the developer places in Studio (by hand or
-			via plugins), under:
-				ReplicatedStorage > Models > Player > PlayerTemplate (Model)
-					A single R6 Character with a Humanoid and a part named
-					"HumanoidRootPart" — cloned once per joining player.
-					PrimaryPart is set to that HumanoidRootPart on clone.
-					CameraService depends on that exact child name to find
-					its focus target's position, so it must be present.
-				ReplicatedStorage > Models > Summons > <any name> (Model or Part)
-					One Model (or a single Part, for simple stand-ins) per
-					creature card, matched to CardData by a number Attribute
-					named "CardId" set on the instance itself (its own Name
-					can be anything readable) — same attribute-driven lookup
-					pattern BoardService already uses for tile data, kept
-					consistent on purpose.
-			If a template/model is missing, the corresponding token/marker
-			is simply skipped with a warn() — nothing else breaks.
+		This was 574 lines doing three unrelated jobs. Presentation moved to
+		BoardVisualService, request validation to ActionValidator, and state
+		shaping to SnapshotService. What remains is composition and the turn
+		driver: the sequence of phases a turn passes through, and what each
+		one does.
 
-		A tile Part's own color/material/model are entirely Studio-authored
-		by the developer (own board designs, not code-generated) — the only
-		visuals this script adds are the BillboardGui label and the
-		ownership Material flip (Neon) / era recolor reactions below, which
-		are universal gameplay-state indicators, not part of a tile's design.
+		Init order is now explicit and asserted rather than implied. The old
+		version called four Init functions in an order that silently mattered
+		— EconomyService.Init subscribed to MovementService, MatchService.Init
+		subscribed to EconomyService — so reordering them would have severed
+		the subscriptions with no error anywhere.
 
-		Player input/output goes through ReplicatedStorage.Shared.Remotes to
-		the client HUD (StarterPlayerScripts > UIService) — Roll/Summon/
-		Challenge/PayToll/EndTurn/Terraform/CastSpell/UseItem requests come in
-		via RemoteEvents below, gated by MatchService.IsPlayersTurn (and
-		HasRolledThisTurn for rolling) before touching Movement/Battle/
-		Economy/Terraform/CardEffectService, and state pushes back out via
-		StateUpdated/ActionResult. Still no 2v2 alliance awareness or a real
-		match-setup lobby — see MatchService's header.
+	Turn flow (Milestone 1):
+		TurnStart -> Draw -> SpellChoice -> RollReady
+		  ... player rolls ...
+		DiceResolution -> Movement -> LandingResolution -> LandingActionChoice
+		  ... player acts or ends turn ...
+		TurnEnd -> VictoryCheck -> (RoundEnd) -> TurnStart for the next player
+
+		Draw and SpellChoice pass straight through: there is no book and no
+		hand until Milestone 3. They are traversed rather than skipped on
+		purpose, so the phases exist, are logged, and are already in the
+		right place when the deck arrives.
+
+	Authority:
+		Every request enters through one SubmitIntent handler and passes the
+		same three checks in order — orchestrator admissibility (right
+		player, fresh sequence), expected-phase agreement, then
+		ActionValidator (right phase for this intent, right actor). Only then
+		does it reach a service. The acting player always comes from
+		OnServerEvent's own first argument, never the payload.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
-local Workspace = game:GetService("Workspace")
 
-local EraData = require(ReplicatedStorage.Shared.EraData)
+local Enums = require(ReplicatedStorage.Shared.Enums)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
-local BoardService = require(ServerScriptService.Systems.BoardService)
-local MovementService = require(ServerScriptService.Systems.MovementService)
-local CardService = require(ServerScriptService.Systems.CardService)
-local EconomyService = require(ServerScriptService.Systems.EconomyService)
-local BattleService = require(ServerScriptService.Systems.BattleService)
-local MatchService = require(ServerScriptService.Systems.MatchService)
-local TerraformService = require(ServerScriptService.Systems.TerraformService)
-local CardEffectService = require(ServerScriptService.Systems.CardEffectService)
 
-BoardService.Init()
-EconomyService.Init()
+local Systems = ServerScriptService.Systems
+local MatchLogService = require(Systems.MatchLogService)
+local MatchOrchestrator = require(Systems.MatchOrchestrator)
+local ActionValidator = require(Systems.ActionValidator)
+local SnapshotService = require(Systems.SnapshotService)
+local BoardService = require(Systems.BoardService)
+local BoardVisualService = require(Systems.BoardVisualService)
+local MovementService = require(Systems.MovementService)
+local CardService = require(Systems.CardService)
+local EconomyService = require(Systems.EconomyService)
+local BattleService = require(Systems.BattleService)
+local TerraformService = require(Systems.TerraformService)
+local CardEffectService = require(Systems.CardEffectService)
+
+local Phase = Enums.Phase
+local Intent = Enums.Intent
+
+-- === Bootstrap ==============================================================
+-- Ordered deliberately: state owners first, then things that subscribe to
+-- them, then presentation. A comment is not enough on its own, so the
+-- dependency is stated next to each call.
+MatchLogService.Init()
+MatchOrchestrator.Init({ Log = MatchLogService })
+BoardService.Init() -- reads the tagged Parts; everything below reads tiles
+EconomyService.Init() -- subscribes to MovementService.LapCompleted
 BattleService.Init()
-MatchService.Init()
 
-local TILE_TAG = "Tile"
+BoardVisualService.Init({
+	Board = BoardService,
+	Battle = BattleService,
+	Card = CardService,
+	Movement = MovementService,
+})
 
--- Developer-authored model folders — see this file's header
--- ("Model authoring") for the exact naming/attribute contract.
-local MODELS_FOLDER = ReplicatedStorage:WaitForChild("Models", 10)
-local PLAYER_MODELS_FOLDER = MODELS_FOLDER and MODELS_FOLDER:WaitForChild("Player", 10)
-local SUMMON_MODELS_FOLDER = MODELS_FOLDER and MODELS_FOLDER:WaitForChild("Summons", 10)
+SnapshotService.Init({
+	Orchestrator = MatchOrchestrator,
+	Validator = ActionValidator,
+	Board = BoardService,
+	Movement = MovementService,
+	Economy = EconomyService,
+	Battle = BattleService,
+	Card = CardService,
+	GetParticipants = MatchOrchestrator.GetParticipants,
+	GetParticipantSet = MatchOrchestrator.GetParticipantSet,
+	GetHandCount = function()
+		return 0 -- no hands until Milestone 3
+	end,
+	GetDefenderId = function()
+		return nil -- no battle phases entered until Milestone 4
+	end,
+})
 
-if MODELS_FOLDER == nil then
-	warn("[DreamingOfUtopia] Main: ReplicatedStorage.Models not found — create Models > Player and Models > Summons and place your Cepter/creature models there (see this file's header comment).")
+if #CollectionService:GetTagged("Tile") == 0 then
+	warn("[DreamingOfUtopia] No Parts tagged 'Tile' — hand-place and tag a board before playing")
 end
 
-local PLAYER_TEMPLATE_NAME = "PlayerTemplate"
+-- === State push =============================================================
 
--- How far above the tile surface the Cepter token's pivot (its
--- HumanoidRootPart) sits — tunable to match whatever proportions the
--- authored PlayerTemplate model actually has.
-local CEPTER_ROOT_HEIGHT = 3
-
-local cepterFolder = Instance.new("Folder")
-cepterFolder.Name = "Cepters"
-cepterFolder.Parent = Workspace
-
-local defenderFolder = Instance.new("Folder")
-defenderFolder.Name = "Defenders"
-defenderFolder.Parent = Workspace
-
--- tileId -> Part, built from the same "Tile" tag BoardService itself scans.
--- Kept separate from BoardService on purpose — it stays instance-agnostic
--- (pure data/logic); this is a visual-only concern that belongs to Main.
-local tileParts = {}
-local tileLabels = {}
-
-local function attachTileLabel(tileId, part)
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "TileLabel"
-	billboard.Size = UDim2.fromOffset(160, 40)
-	billboard.StudsOffset = Vector3.new(0, 2, 0)
-	billboard.AlwaysOnTop = true
-	billboard.Parent = part
-
-	local label = Instance.new("TextLabel")
-	label.Name = "Label"
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.TextScaled = true
-	label.Font = Enum.Font.Code
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.TextStrokeTransparency = 0.3
-	label.Parent = billboard
-
-	tileLabels[tileId] = label
+local function pushStateTo(player)
+	Remotes.StateUpdated:FireClient(player, SnapshotService.Build(player.UserId))
 end
 
-local taggedTileParts = CollectionService:GetTagged(TILE_TAG)
-if #taggedTileParts == 0 then
-	warn("[DreamingOfUtopia] No Parts tagged '" .. TILE_TAG .. "' found in Workspace — hand-place and tag a board before playing (see BoardService's header).")
-end
-
-for _, part in ipairs(taggedTileParts) do
-	local tileId = part:GetAttribute("Id")
-	if tileId ~= nil then
-		tileParts[tileId] = part
-		attachTileLabel(tileId, part)
-	end
-end
-
--- A point `radius` studs above the tile Part's own top surface — works
--- regardless of a hand-placed tile's size or elevation.
-local function getTileWorldPosition(tileId, radius)
-	local part = tileParts[tileId]
-	if part == nil then
-		return Vector3.new(0, radius, 0)
-	end
-	return part.Position + Vector3.new(0, part.Size.Y / 2 + radius, 0)
-end
-
--- Cloned models are teleport-positioned (PivotTo), never simulated —
--- anchoring every part keeps them from falling/reacting to physics,
--- matching the fully-anchored/teleport-based movement the rest of the
--- board already uses. Handles both a Model (anchor its descendant Parts)
--- and a lone BasePart used directly as a summon (anchor itself too — a
--- single Part has no descendants of its own).
-local function anchorAllParts(instance)
-	if instance:IsA("BasePart") then
-		instance.Anchored = true
-	end
-	for _, descendant in ipairs(instance:GetDescendants()) do
-		if descendant:IsA("BasePart") then
-			descendant.Anchored = true
-		end
-	end
-end
-
--- Finds the Models.Summons entry whose "CardId" Attribute matches — see
--- this file's header ("Model authoring") for the naming/attribute contract.
--- Accepts either a Model or a single BasePart (both support Clone/PivotTo/
--- GetBoundingBox via PVInstance), since a simple stand-in summon might
--- just be one Part rather than a full Model.
-local function findSummonModel(cardId)
-	if SUMMON_MODELS_FOLDER == nil then
-		return nil
-	end
-	for _, instance in ipairs(SUMMON_MODELS_FOLDER:GetChildren()) do
-		if (instance:IsA("Model") or instance:IsA("BasePart")) and instance:GetAttribute("CardId") == cardId then
-			return instance
-		end
-	end
-	return nil
-end
-
--- GetBoundingBox only exists on Model, not BasePart — a single Part's own
--- Size is already the height we need, no bounding-box math required.
-local function getInstanceHeight(instance)
-	if instance:IsA("BasePart") then
-		return instance.Size.Y
-	end
-	local _, size = instance:GetBoundingBox()
-	return size.Y
-end
-
--- tileId -> the cloned creature instance (Model or Part) marking that
--- tile's defender.
-local defenderMarkers = {}
-
-local function updateDefenderMarker(tileId, newOwnerUserId)
-	local existing = defenderMarkers[tileId]
-	if existing ~= nil then
-		existing:Destroy()
-		defenderMarkers[tileId] = nil
-	end
-
-	if newOwnerUserId == nil then
-		return
-	end
-
-	local defender = BattleService.GetDefender(tileId)
-	local card = defender and CardService.GetCard(defender.CardId)
-	if card == nil then
-		return
-	end
-
-	local summonTemplate = findSummonModel(card.Id)
-	if summonTemplate == nil then
-		warn(string.format("[DreamingOfUtopia] Main: no Models.Summons model with CardId=%d (%s) — place one there (see this file's header).", card.Id, card.Name))
-		return
-	end
-
-	local marker = summonTemplate:Clone()
-	marker.Name = "Defender_" .. tileId
-	anchorAllParts(marker)
-	marker.Parent = defenderFolder
-	marker:PivotTo(CFrame.new(getTileWorldPosition(tileId, getInstanceHeight(marker) / 2)))
-
-	defenderMarkers[tileId] = marker
-end
-
-local function refreshTileLabel(tileId)
-	local tile = BoardService.GetTile(tileId)
-	local label = tileLabels[tileId]
-	if tile == nil or label == nil then
-		return
-	end
-
-	if tile.TileType == "Start" then
-		label.Text = string.format("#%d — Start", tile.Id)
-		return
-	end
-
-	local era = EraData.GetEra(tile.Era)
-	local ownerText = tile.Owner and ("Owner " .. tostring(tile.Owner)) or "Unclaimed"
-
-	local defenderText = ""
-	local defender = BattleService.GetDefender(tileId)
-	if defender ~= nil then
-		local card = CardService.GetCard(defender.CardId)
-		if card ~= nil then
-			defenderText = string.format(" — %s (%dHP)", card.Name, defender.CurrentHP)
-		end
-	end
-
-	label.Text = string.format("#%d — %s — Lv%d — %s%s", tile.Id, era.DisplayName, tile.Level, ownerText, defenderText)
-end
-
-for tileId, _ in pairs(tileParts) do
-	refreshTileLabel(tileId)
-end
-
--- Per-player HUD state snapshot, pushed to the client over Remotes.StateUpdated.
-local function buildStateSnapshot(player)
-	local tileId = MovementService.GetCurrentTile(player)
-	local tile = tileId and BoardService.GetTile(tileId)
-	local defender = tileId and BattleService.GetDefender(tileId)
-	local defenderCard = defender and CardService.GetCard(defender.CardId)
-
-	local currentTurnPlayer = MatchService.GetCurrentTurnPlayer()
-	local winnerUserId = MatchService.GetWinner()
-	local winnerPlayer = winnerUserId and Players:GetPlayerByUserId(winnerUserId)
-
-	return {
-		Balance = EconomyService.GetBalance(player),
-		TileId = tileId,
-		TileType = tile and tile.TileType,
-		TileEra = tile and tile.Era,
-		TileLevel = tile and tile.Level,
-		TileOwner = tile and tile.Owner,
-		DefenderName = defenderCard and defenderCard.Name,
-		DefenderHP = defender and defender.CurrentHP,
-		Toll = (tile and tile.TileType == "Property" and tile.Owner ~= nil) and BoardService.GetToll(tileId) or 0,
-		IsYourTurn = MatchService.IsPlayersTurn(player),
-		CurrentTurnUserId = currentTurnPlayer and currentTurnPlayer.UserId,
-		CurrentTurnName = currentTurnPlayer and currentTurnPlayer.Name,
-		HasRolled = MatchService.HasRolledThisTurn(),
-		MatchEnded = MatchService.IsMatchEnded(),
-		WinnerName = winnerPlayer and winnerPlayer.Name or (winnerUserId and tostring(winnerUserId)),
-	}
-end
-
-local function sendStateToPlayer(player)
-	Remotes.StateUpdated:FireClient(player, buildStateSnapshot(player))
-end
-
-local function refreshAllPlayerStates()
+local function pushStateToAll()
 	for _, player in ipairs(Players:GetPlayers()) do
-		sendStateToPlayer(player)
+		pushStateTo(player)
 	end
 end
 
--- React to BoardService state changes instead of polling — the same
--- cross-system signal pattern MovementService and BattleService use.
-BoardService.TileOwnerChanged:Connect(function(tileId, newOwnerUserId)
-	local part = tileParts[tileId]
-	if part ~= nil then
-		part.Material = newOwnerUserId and Enum.Material.Neon or Enum.Material.SmoothPlastic
-	end
-	refreshTileLabel(tileId)
-	updateDefenderMarker(tileId, newOwnerUserId)
-	refreshAllPlayerStates()
-end)
-
-BoardService.TileLeveledUp:Connect(function(tileId, _newLevel)
-	refreshTileLabel(tileId)
-	refreshAllPlayerStates()
-end)
-
-BoardService.EraChanged:Connect(function(tileId, newEra)
-	local part = tileParts[tileId]
-	if part ~= nil then
-		part.Color = EraData.GetEra(newEra).Color
-	end
-	refreshTileLabel(tileId)
-	refreshAllPlayerStates()
-end)
-
-BattleService.DefenderBuffed:Connect(function(tileId, _newHP)
-	refreshTileLabel(tileId)
-	refreshAllPlayerStates()
-end)
-
--- Cepter tokens: one clone of Models.Player.PlayerTemplate per player,
--- walking the board as MovementService moves them. `cepterTokens` holds
--- each player's cloned Model, named "Cepter_"..userId — the exact name/
--- BasePart-child contract CameraService looks up (its HumanoidRootPart
--- child specifically, for position tracking).
-local cepterTokens = {}
-
-local function createCepterToken(player)
-	if PLAYER_MODELS_FOLDER == nil then
-		return
-	end
-
-	local template = PLAYER_MODELS_FOLDER:FindFirstChild(PLAYER_TEMPLATE_NAME)
-	if template == nil or not template:IsA("Model") then
-		warn("[DreamingOfUtopia] Main: no '" .. PLAYER_TEMPLATE_NAME .. "' Model found under Models.Player — see this file's header.")
-		return
-	end
-
-	local model = template:Clone()
-	model.Name = "Cepter_" .. player.UserId
-
-	local humanoidRootPart = model:FindFirstChild("HumanoidRootPart")
-	if humanoidRootPart == nil or not humanoidRootPart:IsA("BasePart") then
-		warn("[DreamingOfUtopia] Main: '" .. PLAYER_TEMPLATE_NAME .. "' has no HumanoidRootPart — CameraService and movement both depend on it.")
-		model:Destroy()
-		return
-	end
-
-	model.PrimaryPart = humanoidRootPart
-	anchorAllParts(model)
-	model.Parent = cepterFolder
-	model:PivotTo(CFrame.new(getTileWorldPosition(MovementService.GetCurrentTile(player), CEPTER_ROOT_HEIGHT)))
-
-	cepterTokens[player.UserId] = model
+local function replyTo(player, intent, sequence, result)
+	Remotes.ActionResult:FireClient(player, {
+		Ok = result.Ok,
+		Code = result.Code,
+		Message = result.Message,
+		Intent = intent,
+		Sequence = sequence,
+	})
 end
 
-local function moveCepterToken(player, tileId)
-	local model = cepterTokens[player.UserId]
-	if model == nil then
+-- === Turn driver ============================================================
+
+local function advanceThrough(phases, reason)
+	for _, phase in ipairs(phases) do
+		local result = MatchOrchestrator.TransitionTo(phase, reason)
+		if not result.Ok then
+			warn(string.format("[DreamingOfUtopia] turn driver stuck entering %s: %s", phase, result.Message))
+			return false
+		end
+	end
+	return true
+end
+
+local function beginTurnFor(userId)
+	if not advanceThrough({ Phase.TurnStart }, "next turn") then
 		return
 	end
-	model:PivotTo(CFrame.new(getTileWorldPosition(tileId, CEPTER_ROOT_HEIGHT)))
+
+	local began = MatchOrchestrator.BeginTurn(userId)
+	if not began.Ok then
+		warn("[DreamingOfUtopia] BeginTurn failed: " .. tostring(began.Message))
+		return
+	end
+
+	-- Draw and SpellChoice are traversed, not skipped: the phases are real
+	-- and logged, they simply have nothing to do until there is a book.
+	advanceThrough({ Phase.Draw, Phase.SpellChoice, Phase.RollReady }, "no book yet")
+	pushStateToAll()
 end
+
+local function endTurnAndAdvance()
+	if not advanceThrough({ Phase.TurnEnd, Phase.VictoryCheck }, "turn over") then
+		return
+	end
+
+	-- Victory is still Current Magic against a target; Total Magic and the
+	-- return-to-castle confirmation arrive in Milestone 5.
+	local winnerId = nil
+	for _, userId in ipairs(MatchOrchestrator.GetParticipants()) do
+		local balance = EconomyService.GetBalance(userId)
+		if balance ~= nil and balance >= 3000 then
+			winnerId = userId
+			break
+		end
+	end
+
+	if winnerId ~= nil then
+		MatchOrchestrator.TransitionTo(Phase.MatchComplete, "win target reached")
+		MatchLogService.Append("MatchWon", { UserId = winnerId })
+		pushStateToAll()
+		return
+	end
+
+	local nextUserId, wrapped = MatchOrchestrator.AdvanceToNextPlayer()
+	if nextUserId == nil then
+		return -- nobody left to play
+	end
+
+	if wrapped then
+		MatchOrchestrator.TransitionTo(Phase.RoundEnd, "rotation wrapped")
+	end
+	beginTurnFor(nextUserId)
+end
+
+-- What the player may actually do where they landed. Returning an empty list
+-- means the turn simply ends — landing somewhere with no legal action is a
+-- normal outcome, not an error.
+local function landingActionsFor(userId, tileId)
+	local tile = BoardService.GetTile(tileId)
+	if tile == nil or tile.TileType ~= "Property" then
+		return {}
+	end
+	if tile.Owner == nil then
+		return { Intent.ChooseSummon }
+	end
+	if tile.Owner == userId then
+		return {} -- own territory; level-up lands in Milestone 5
+	end
+	return { Intent.PayToll, Intent.ChooseSummon }
+end
+
+local function resolveMovementAndLanding(player, steps)
+	if not advanceThrough({ Phase.DiceResolution, Phase.Movement }, "rolled " .. steps) then
+		return
+	end
+
+	MovementService.MoveCepter(player, steps)
+
+	if not advanceThrough({ Phase.LandingResolution }, "movement finished") then
+		return
+	end
+
+	local tileId = MovementService.GetCurrentTile(player)
+	if #landingActionsFor(player.UserId, tileId) == 0 then
+		endTurnAndAdvance()
+		return
+	end
+
+	MatchOrchestrator.TransitionTo(Phase.LandingActionChoice, "awaiting the player's post-move action")
+	pushStateToAll()
+end
+
+-- === Intent handling ========================================================
+
+local intentHandlers = {}
+
+intentHandlers[Intent.Roll] = function(player)
+	local total = MovementService.RollDice(1)
+	MatchLogService.Append("Rolled", { UserId = player.UserId, Total = total })
+	-- Movement resolves in the same call, so the phase never rests in
+	-- DiceResolution or Movement waiting on anything.
+	task.spawn(resolveMovementAndLanding, player, total)
+	return { Ok = true, Message = string.format("Rolled %d", total) }
+end
+
+intentHandlers[Intent.ChooseSummon] = function(player, payload)
+	local cardId = payload and payload.CardId
+	if typeof(cardId) ~= "number" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidCard, Message = "no card id" }
+	end
+
+	local tileId = MovementService.GetCurrentTile(player)
+	local tile = BoardService.GetTile(tileId)
+	local isInvasion = tile ~= nil and tile.Owner ~= nil and tile.Owner ~= player.UserId
+
+	local ok, reason
+	if isInvasion then
+		ok, reason = BattleService.ChallengeTile(player, cardId, tileId)
+		if reason ~= nil then
+			return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = reason }
+		end
+		-- A lost challenge is a successful action with an unfavourable
+		-- outcome; the visitor then owes the toll.
+		if not ok then
+			EconomyService.PayToll(player, tileId)
+		end
+		task.spawn(endTurnAndAdvance)
+		return { Ok = true, Message = ok and ("Won tile #" .. tileId) or "Lost the challenge; toll paid" }
+	end
+
+	ok, reason = BattleService.SummonCreature(player, cardId, tileId)
+	if not ok then
+		return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = tostring(reason) }
+	end
+	task.spawn(endTurnAndAdvance)
+	return { Ok = true, Message = "Claimed tile #" .. tileId }
+end
+
+intentHandlers[Intent.PayToll] = function(player)
+	local tileId = MovementService.GetCurrentTile(player)
+	local ok, reason = EconomyService.PayToll(player, tileId)
+	if not ok then
+		return { Ok = false, Code = Enums.RejectReason.InsufficientMagic, Message = tostring(reason) }
+	end
+	task.spawn(endTurnAndAdvance)
+	return { Ok = true, Message = "Toll paid" }
+end
+
+intentHandlers[Intent.ChooseTerritoryCommand] = function(player, payload)
+	local targetElement = payload and payload.Element
+	if targetElement ~= nil and typeof(targetElement) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidTarget, Message = "bad element" }
+	end
+
+	local normalized = (targetElement ~= "" and targetElement) or nil
+	local tileId = MovementService.GetCurrentTile(player)
+	local ok, reason = TerraformService.TerraformTile(player, tileId, normalized)
+	if not ok then
+		return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = tostring(reason) }
+	end
+	task.spawn(endTurnAndAdvance)
+	return { Ok = true, Message = "Terraformed tile #" .. tileId }
+end
+
+intentHandlers[Intent.EndTurn] = function()
+	task.spawn(endTurnAndAdvance)
+	return { Ok = true, Message = "Turn ended" }
+end
+
+-- The single entry point. `player` comes from OnServerEvent itself and cannot
+-- be spoofed; nothing in the payload identifies who is asking.
+Remotes.SubmitIntent.OnServerEvent:Connect(function(player, intent, sequence, expectedPhase, payload)
+	local userId = player.UserId
+
+	-- 1. Admissibility: active player, fresh sequence, match still running.
+	local admitted = MatchOrchestrator.SubmitIntent(userId, tostring(intent), sequence)
+	if not admitted.Ok then
+		replyTo(player, intent, sequence, admitted)
+		return
+	end
+
+	-- 2. The client acted on a screen; if the server has moved on since, the
+	-- request is stale by definition rather than merely late.
+	local currentPhase = MatchOrchestrator.GetPhase()
+	if expectedPhase ~= nil and expectedPhase ~= currentPhase then
+		replyTo(player, intent, sequence, {
+			Ok = false,
+			Code = Enums.RejectReason.StaleSequence,
+			Message = string.format("you acted during %s, the match is in %s", tostring(expectedPhase), currentPhase),
+		})
+		pushStateTo(player)
+		return
+	end
+
+	-- 3. Is this intent legal in this phase, for this actor?
+	local allowed = ActionValidator.validate({
+		Phase = currentPhase,
+		ActivePlayerId = MatchOrchestrator.GetActivePlayerId(),
+		DefenderId = nil,
+		RequesterId = userId,
+		Participants = MatchOrchestrator.GetParticipantSet(),
+	}, intent)
+	if not allowed.Ok then
+		replyTo(player, intent, sequence, allowed)
+		return
+	end
+
+	local handler = intentHandlers[intent]
+	if handler == nil then
+		replyTo(player, intent, sequence, {
+			Ok = false,
+			Code = Enums.RejectReason.IllegalAction,
+			Message = intent .. " is not implemented yet",
+		})
+		return
+	end
+
+	local outcome = handler(player, payload)
+	replyTo(player, intent, sequence, outcome)
+	pushStateToAll()
+end)
+
+-- === Players ================================================================
 
 local function onPlayerAdded(player)
 	MovementService.RegisterCepter(player)
 	EconomyService.RegisterPlayer(player)
-	MatchService.RegisterPlayer(player)
-	createCepterToken(player)
-	sendStateToPlayer(player)
+	MatchOrchestrator.AddParticipant(player.UserId)
+	BoardVisualService.CreateCepterToken(player)
+
+	-- The first player to arrive starts the match. A real lobby with an
+	-- explicit start step is Milestone 8; until then the match begins as
+	-- soon as someone is here to play it.
+	if MatchOrchestrator.GetPhase() == Phase.WaitingForPlayers then
+		MatchOrchestrator.TransitionTo(Phase.MatchSetup, "first player joined")
+		beginTurnFor(player.UserId)
+	else
+		pushStateToAll()
+	end
 end
 
 local function onPlayerRemoving(player)
+	local wasActive = MatchOrchestrator.IsActivePlayer(player.UserId)
+
 	MovementService.RemoveCepter(player)
 	EconomyService.RemovePlayer(player)
-	MatchService.RemovePlayer(player)
-	local token = cepterTokens[player.UserId]
-	if token ~= nil then
-		token:Destroy()
-		cepterTokens[player.UserId] = nil
+	BoardVisualService.RemoveCepterToken(player)
+	MatchOrchestrator.RemoveParticipant(player.UserId)
+
+	-- Leaving mid-turn must not strand the match on a player who is gone.
+	if wasActive and MatchOrchestrator.GetParticipantCount() > 0 then
+		task.spawn(endTurnAndAdvance)
+	else
+		pushStateToAll()
 	end
-	refreshAllPlayerStates()
 end
 
-MovementService.CepterMoved:Connect(function(player, _fromTileId, toTileId)
-	moveCepterToken(player, toTileId)
-	sendStateToPlayer(player)
-end)
-
 MovementService.CepterLanded:Connect(function(player, tileId)
-	print(string.format("[DreamingOfUtopia] %s landed on tile #%d", player.Name, tileId))
-end)
+	MatchLogService.Append("CepterLanded", { UserId = player.UserId, TileId = tileId })
+end, 0, "Main.CepterLanded")
 
 MovementService.LapCompleted:Connect(function(player, lapCount)
-	print(string.format("[DreamingOfUtopia] %s completed lap %d", player.Name, lapCount))
-end)
+	MatchLogService.Append("LapCompleted", { UserId = player.UserId, Lap = lapCount })
+end, 0, "Main.LapCompleted")
 
-EconomyService.BalanceChanged:Connect(function(userId, _newBalance)
+EconomyService.BalanceChanged:Connect(function(userId)
 	local player = Players:GetPlayerByUserId(userId)
 	if player ~= nil then
-		sendStateToPlayer(player)
+		pushStateTo(player)
 	end
-end)
-
--- Player action requests from the client HUD (StarterPlayerScripts > UIService).
--- `player` always comes from OnServerEvent's own argument, never from the
--- client — cannot be spoofed, this is what keeps these calls authoritative.
--- Every action is gated by MatchService.IsPlayersTurn — Movement/Battle/
--- Economy stay turn-agnostic themselves, the check lives here.
-Remotes.RollRequest.OnServerEvent:Connect(function(player)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-	if MatchService.HasRolledThisTurn() then
-		Remotes.ActionResult:FireClient(player, "Already rolled this turn")
-		return
-	end
-
-	local total = MovementService.RollDice(1)
-	print(string.format("[DreamingOfUtopia] %s rolled %d", player.Name, total))
-	Remotes.ActionResult:FireClient(player, string.format("Rolled %d", total))
-	MatchService.MarkRolled()
-	MovementService.MoveCepter(player, total)
-end)
-
-Remotes.SummonRequest.OnServerEvent:Connect(function(player, cardId)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-	if typeof(cardId) ~= "number" then
-		Remotes.ActionResult:FireClient(player, "Invalid card id")
-		return
-	end
-
-	local tileId = MovementService.GetCurrentTile(player)
-	local success, reason = BattleService.SummonCreature(player, cardId, tileId)
-	Remotes.ActionResult:FireClient(player, success and ("Claimed tile #" .. tileId) or ("Summon failed: " .. tostring(reason)))
-end)
-
-Remotes.ChallengeRequest.OnServerEvent:Connect(function(player, cardId)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-	if typeof(cardId) ~= "number" then
-		Remotes.ActionResult:FireClient(player, "Invalid card id")
-		return
-	end
-
-	local tileId = MovementService.GetCurrentTile(player)
-	local attackerWon, reason = BattleService.ChallengeTile(player, cardId, tileId)
-	local message
-	if reason ~= nil then
-		message = "Challenge failed: " .. reason
-	else
-		message = attackerWon and ("Won! Claimed tile #" .. tileId) or "Lost the challenge"
-	end
-	Remotes.ActionResult:FireClient(player, message)
-end)
-
-Remotes.PayTollRequest.OnServerEvent:Connect(function(player)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-
-	local tileId = MovementService.GetCurrentTile(player)
-	local success, reason = EconomyService.PayToll(player, tileId)
-	Remotes.ActionResult:FireClient(player, success and "Toll paid" or ("Pay toll failed: " .. tostring(reason)))
-end)
-
-Remotes.EndTurnRequest.OnServerEvent:Connect(function(player)
-	local success, reason = MatchService.EndTurn(player)
-	Remotes.ActionResult:FireClient(player, success and "Turn ended" or ("End turn failed: " .. tostring(reason)))
-end)
-
-Remotes.TerraformRequest.OnServerEvent:Connect(function(player, targetEra)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-	if typeof(targetEra) ~= "string" then
-		Remotes.ActionResult:FireClient(player, "Invalid era")
-		return
-	end
-
-	local normalizedEra = targetEra ~= "" and targetEra or nil
-	local tileId = MovementService.GetCurrentTile(player)
-	local cost = TerraformService.GetTerraformCost(tileId, normalizedEra)
-	local success, reason = TerraformService.TerraformTile(player, tileId, normalizedEra)
-	local message
-	if success then
-		message = string.format("Terraformed to %s (-%d Magic)", EraData.GetEra(normalizedEra).DisplayName, cost)
-	else
-		message = "Terraform failed: " .. tostring(reason)
-	end
-	Remotes.ActionResult:FireClient(player, message)
-end)
-
-Remotes.CastSpellRequest.OnServerEvent:Connect(function(player, cardId)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-	if typeof(cardId) ~= "number" then
-		Remotes.ActionResult:FireClient(player, "Invalid card id")
-		return
-	end
-
-	local success, reason = CardEffectService.CastSpell(player, cardId)
-	Remotes.ActionResult:FireClient(player, success and "Spell cast" or ("Cast failed: " .. tostring(reason)))
-end)
-
-Remotes.UseItemRequest.OnServerEvent:Connect(function(player, cardId, tileId)
-	if not MatchService.IsPlayersTurn(player) then
-		Remotes.ActionResult:FireClient(player, "Not your turn")
-		return
-	end
-	if typeof(cardId) ~= "number" or typeof(tileId) ~= "number" then
-		Remotes.ActionResult:FireClient(player, "Invalid card id or target tile")
-		return
-	end
-
-	local success, reason = CardEffectService.UseItem(player, cardId, tileId)
-	Remotes.ActionResult:FireClient(player, success and ("Item used on tile #" .. tileId) or ("Use item failed: " .. tostring(reason)))
-end)
-
-EconomyService.WinTargetReached:Connect(function(userId, balance)
-	print(string.format("[DreamingOfUtopia] Player %d reached the win target with %d Magic!", userId, balance))
-end)
-
-MatchService.TurnChanged:Connect(function(currentTurnUserId)
-	local currentPlayer = Players:GetPlayerByUserId(currentTurnUserId)
-	print(string.format("[DreamingOfUtopia] Turn changed to %s", currentPlayer and currentPlayer.Name or tostring(currentTurnUserId)))
-	refreshAllPlayerStates()
-end)
-
-MatchService.MatchEnded:Connect(function(winnerUserId)
-	local winnerPlayer = Players:GetPlayerByUserId(winnerUserId)
-	print(string.format("[DreamingOfUtopia] Match ended! Winner: %s", winnerPlayer and winnerPlayer.Name or tostring(winnerUserId)))
-	refreshAllPlayerStates()
-end)
+end, 0, "Main.BalanceChanged")
 
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(onPlayerRemoving)
@@ -570,5 +415,9 @@ for _, player in ipairs(Players:GetPlayers()) do
 	onPlayerAdded(player)
 end
 
-print("[DreamingOfUtopia] Board initialized:", #BoardService.GetAllTiles(), "tiles")
-print("[DreamingOfUtopia] Cards loaded:", #CardService.GetAllCards())
+print(string.format(
+	"[DreamingOfUtopia] Ready — %d tiles, %d cards, phase %s",
+	#BoardService.GetAllTiles(),
+	#CardService.GetAllCards(),
+	MatchOrchestrator.GetPhase()
+))

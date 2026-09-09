@@ -252,4 +252,109 @@ function MatchOrchestrator.SubmitIntent(userId, intentName, sequence)
 	return ActionResult.ok({ UserId = userId, Intent = intentName, Sequence = sequence })
 end
 
+-- === Turn rotation ==========================================================
+--
+-- The rotation lives here rather than in MatchService because "whose turn is
+-- it" and "what phase are we in" have to agree, and two modules each holding
+-- half of that is how they silently diverge. MatchService's turn-gating
+-- functions are superseded by these; see its header.
+
+local _participants = {}
+local _rotationIndex = 1
+
+local function indexOfParticipant(userId)
+	for index, id in ipairs(_participants) do
+		if id == userId then
+			return index
+		end
+	end
+	return nil
+end
+
+function MatchOrchestrator.AddParticipant(userId)
+	if userId == nil or indexOfParticipant(userId) then
+		return false
+	end
+	table.insert(_participants, userId)
+	_log.Append("ParticipantAdded", { UserId = userId, Count = #_participants }, context())
+	return true
+end
+
+-- Keeps the rotation pointing at the same player it was on. Removing someone
+-- earlier in the order would otherwise shift the index and silently skip or
+-- repeat a turn.
+function MatchOrchestrator.RemoveParticipant(userId)
+	local index = indexOfParticipant(userId)
+	if index == nil then
+		return false
+	end
+
+	table.remove(_participants, index)
+
+	if index < _rotationIndex then
+		_rotationIndex -= 1
+	end
+	if _rotationIndex > #_participants then
+		_rotationIndex = 1
+	end
+
+	if _activePlayerId == userId then
+		_activePlayerId = nil
+	end
+	_lastSequence[userId] = nil
+
+	_log.Append("ParticipantRemoved", { UserId = userId, Count = #_participants }, context())
+	return true
+end
+
+function MatchOrchestrator.GetParticipants()
+	local copy = {}
+	for index, id in ipairs(_participants) do
+		copy[index] = id
+	end
+	return copy
+end
+
+function MatchOrchestrator.GetParticipantSet()
+	local set = {}
+	for _, id in ipairs(_participants) do
+		set[id] = true
+	end
+	return set
+end
+
+function MatchOrchestrator.GetParticipantCount()
+	return #_participants
+end
+
+-- Returns the next player and whether the rotation wrapped. Wrapping is what
+-- completes a round, and the caller uses it to decide whether to pass through
+-- RoundEnd — the orchestrator does not transition on its own here, because
+-- the phase move belongs to whoever is driving the turn.
+function MatchOrchestrator.AdvanceToNextPlayer()
+	if #_participants == 0 then
+		return nil, false
+	end
+
+	local nextIndex = (_rotationIndex % #_participants) + 1
+	local wrapped = nextIndex <= _rotationIndex
+	_rotationIndex = nextIndex
+
+	return _participants[_rotationIndex], wrapped
+end
+
+function MatchOrchestrator.PeekCurrentRotationPlayer()
+	return _participants[_rotationIndex]
+end
+
+-- Wrap Init so rotation state resets with everything else. Done by
+-- composition rather than by editing Init above, so the reset list cannot
+-- drift out of sync with the state this section owns.
+local baseInit = MatchOrchestrator.Init
+function MatchOrchestrator.Init(options)
+	_participants = {}
+	_rotationIndex = 1
+	return baseInit(options)
+end
+
 return MatchOrchestrator
