@@ -34,16 +34,27 @@
 		module doesn't need to change to support it (just add it into the
 		GetEffectiveHP / ChallengeTile comparison).
 
+		QueueAttackBuff/ApplyDefenderHPBuff exist so CardEffectService (Spell/
+		Item resolution) has somewhere to apply its effects without reaching
+		into _defenders directly — same reasoning as everything else in this
+		module staying the sole owner of that table. A queued attack buff is
+		additive and consumed (win or lose) the next time its owner calls
+		ChallengeTile; a defender HP buff is permanent until that tile's
+		defender record is replaced (recaptured, re-summoned, etc.).
+
 	Public API:
 		BattleService.Init()
 		BattleService.GetEffectiveHP(cardId, tileId) -> number
 		BattleService.SummonCreature(player, cardId, tileId) -> success, reason
 		BattleService.ChallengeTile(player, cardId, tileId) -> attackerWon, reason
 		BattleService.GetDefender(tileId) -> { CardId, OwnerUserId, CurrentHP } or nil
+		BattleService.QueueAttackBuff(player, bonusST) -- consumed on that player's next ChallengeTile
+		BattleService.ApplyDefenderHPBuff(player, tileId, bonusHP) -> success, reason
 
 	Signals (ReplicatedStorage.Shared.Signal instances):
 		BattleService.TileClaimed:Connect(function(tileId, ownerUserId, cardId) end)
 		BattleService.ChallengeResolved:Connect(function(tileId, attackerUserId, defenderUserId, attackerWon) end)
+		BattleService.DefenderBuffed:Connect(function(tileId, newHP) end)
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -58,9 +69,14 @@ local BattleService = {}
 
 BattleService.TileClaimed = Signal.new()
 BattleService.ChallengeResolved = Signal.new()
+BattleService.DefenderBuffed = Signal.new()
 
 -- tileId -> { CardId = number, OwnerUserId = number, CurrentHP = number }
 local _defenders = {}
+
+-- userId -> accumulated ST bonus queued by CardEffectService.CastSpell,
+-- consumed on that player's next ChallengeTile call.
+local _attackBuffs = {}
 
 local function getUserId(playerOrUserId)
 	if playerOrUserId == nil then
@@ -74,6 +90,7 @@ end
 
 function BattleService.Init()
 	_defenders = {}
+	_attackBuffs = {}
 end
 
 function BattleService.GetEffectiveHP(cardId, tileId)
@@ -157,7 +174,10 @@ function BattleService.ChallengeTile(player, cardId, tileId)
 		return false, spendReason
 	end
 
-	local attackerWon = card.ST >= defender.CurrentHP
+	local attackBonus = _attackBuffs[userId] or 0
+	_attackBuffs[userId] = nil
+
+	local attackerWon = (card.ST + attackBonus) >= defender.CurrentHP
 
 	if attackerWon then
 		_defenders[tileId] = {
@@ -172,6 +192,27 @@ function BattleService.ChallengeTile(player, cardId, tileId)
 	BattleService.ChallengeResolved:Fire(tileId, userId, defender.OwnerUserId, attackerWon)
 
 	return attackerWon, nil
+end
+
+function BattleService.QueueAttackBuff(player, bonusST)
+	local userId = getUserId(player)
+	_attackBuffs[userId] = (_attackBuffs[userId] or 0) + bonusST
+end
+
+function BattleService.ApplyDefenderHPBuff(player, tileId, bonusHP)
+	local defender = _defenders[tileId]
+	if defender == nil then
+		return false, "Tile has no defending creature on record"
+	end
+
+	local userId = getUserId(player)
+	if defender.OwnerUserId ~= userId then
+		return false, "You can only equip your own defending creature"
+	end
+
+	defender.CurrentHP += bonusHP
+	BattleService.DefenderBuffed:Fire(tileId, defender.CurrentHP)
+	return true, nil
 end
 
 return BattleService

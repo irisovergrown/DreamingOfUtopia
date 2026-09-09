@@ -10,11 +10,14 @@
 		generic item) to exercise CardService/BattleService end to end —
 		NOT the real 60-80 card launch library, which is still open per
 		the project brief. Card stats are a tunable starting point.
+		Creature names pair the classic element with a nod to its
+		traditional Paracelsian elemental archetype (gnome/salamander/
+		sylph/undine) — flavor only, no mechanical effect.
 
-		Creature names pair each classic element with its retrofuturism-era
-		skin (see EraData) and a nod to the traditional Paracelsian elemental
-		archetype for that element (Salamander=Fire, Sylph=Air, Gnome=Earth,
-		Undine=Water) — flavor only, no mechanical difference from that name.
+		Spell/Item EffectValue magnitudes are consumed by CardEffectService
+		(ServerScriptService.Systems), which resolves what casting/using each
+		one actually does — see its header for Signal Boost/Ninth Signal
+		Charm specifically.
 
 	Card fields:
 		Id                 number, unique
@@ -24,8 +27,8 @@
 		Cost               number, Magic cost to play (placeholder economy)
 		ST                 number, attack power (Creature only)
 		HP                 number, hit points (Creature only)
-		EffectDescription  string, placeholder text — real Spell/Item effect
-		                   hooks land with BattleService/EconomyService later
+		EffectDescription  string, player-facing text describing the effect
+		EffectValue        number, magnitude for Spell/Item effects (nil for Creature) — read by CardEffectService
 
 	Usage:
 		local CardData = require(game:GetService("ReplicatedStorage").Shared.CardData)
@@ -80,7 +83,8 @@ CardData.Cards = {
 		CardType = "Spell",
 		Era = nil,
 		Cost = 15,
-		EffectDescription = "Placeholder: raises target creature's ST for one battle.",
+		EffectValue = 20,
+		EffectDescription = "Raises your ST by 20 for your next Challenge this match (one use).",
 	},
 	{
 		Id = 6,
@@ -88,7 +92,8 @@ CardData.Cards = {
 		CardType = "Item",
 		Era = nil,
 		Cost = 10,
-		EffectDescription = "Placeholder: equips a creature, raises HP while held.",
+		EffectValue = 25,
+		EffectDescription = "Permanently raises a defending creature's HP by 25 while it holds that tile.",
 	},
 }
 

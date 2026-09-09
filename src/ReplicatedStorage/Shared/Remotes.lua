@@ -24,6 +24,8 @@
 		PayTollRequest    client -> server, no args
 		EndTurnRequest    client -> server, no args
 		TerraformRequest  client -> server, (targetEra: string, "" means neutral)
+		CastSpellRequest  client -> server, (cardId: number) — self-buff, no target
+		UseItemRequest    client -> server, (cardId: number, tileId: number)
 		StateUpdated      server -> client, (state: table snapshot)
 		ActionResult      server -> client, (message: string)
 
@@ -43,6 +45,8 @@ local REMOTE_EVENT_NAMES = {
 	"PayTollRequest",
 	"EndTurnRequest",
 	"TerraformRequest",
+	"CastSpellRequest",
+	"UseItemRequest",
 	"StateUpdated",
 	"ActionResult",
 }

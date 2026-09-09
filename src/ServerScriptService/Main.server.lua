@@ -49,11 +49,12 @@
 
 		Player input/output goes through ReplicatedStorage.Shared.Remotes to
 		the client HUD (StarterPlayerScripts > UIService) — Roll/Summon/
-		Challenge/PayToll/EndTurn/Terraform requests come in via RemoteEvents
-		below, gated by MatchService.IsPlayersTurn (and HasRolledThisTurn for
-		rolling) before touching Movement/Battle/Economy/Terraform, and state
-		pushes back out via StateUpdated/ActionResult. Still no 2v2 alliance
-		awareness or a real match-setup lobby — see MatchService's header.
+		Challenge/PayToll/EndTurn/Terraform/CastSpell/UseItem requests come in
+		via RemoteEvents below, gated by MatchService.IsPlayersTurn (and
+		HasRolledThisTurn for rolling) before touching Movement/Battle/
+		Economy/Terraform/CardEffectService, and state pushes back out via
+		StateUpdated/ActionResult. Still no 2v2 alliance awareness or a real
+		match-setup lobby — see MatchService's header.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -71,6 +72,7 @@ local EconomyService = require(ServerScriptService.Systems.EconomyService)
 local BattleService = require(ServerScriptService.Systems.BattleService)
 local MatchService = require(ServerScriptService.Systems.MatchService)
 local TerraformService = require(ServerScriptService.Systems.TerraformService)
+local CardEffectService = require(ServerScriptService.Systems.CardEffectService)
 
 BoardService.Init()
 EconomyService.Init()
@@ -331,6 +333,11 @@ BoardService.EraChanged:Connect(function(tileId, newEra)
 	refreshAllPlayerStates()
 end)
 
+BattleService.DefenderBuffed:Connect(function(tileId, _newHP)
+	refreshTileLabel(tileId)
+	refreshAllPlayerStates()
+end)
+
 -- Cepter tokens: one clone of Models.Player.PlayerTemplate per player,
 -- walking the board as MovementService moves them. `cepterTokens` holds
 -- each player's cloned Model, named "Cepter_"..userId — the exact name/
@@ -510,6 +517,34 @@ Remotes.TerraformRequest.OnServerEvent:Connect(function(player, targetEra)
 		message = "Terraform failed: " .. tostring(reason)
 	end
 	Remotes.ActionResult:FireClient(player, message)
+end)
+
+Remotes.CastSpellRequest.OnServerEvent:Connect(function(player, cardId)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
+	if typeof(cardId) ~= "number" then
+		Remotes.ActionResult:FireClient(player, "Invalid card id")
+		return
+	end
+
+	local success, reason = CardEffectService.CastSpell(player, cardId)
+	Remotes.ActionResult:FireClient(player, success and "Spell cast" or ("Cast failed: " .. tostring(reason)))
+end)
+
+Remotes.UseItemRequest.OnServerEvent:Connect(function(player, cardId, tileId)
+	if not MatchService.IsPlayersTurn(player) then
+		Remotes.ActionResult:FireClient(player, "Not your turn")
+		return
+	end
+	if typeof(cardId) ~= "number" or typeof(tileId) ~= "number" then
+		Remotes.ActionResult:FireClient(player, "Invalid card id or target tile")
+		return
+	end
+
+	local success, reason = CardEffectService.UseItem(player, cardId, tileId)
+	Remotes.ActionResult:FireClient(player, success and ("Item used on tile #" .. tileId) or ("Use item failed: " .. tostring(reason)))
 end)
 
 EconomyService.WinTargetReached:Connect(function(userId, balance)

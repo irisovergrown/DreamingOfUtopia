@@ -5,43 +5,47 @@
 		ReplicatedStorage > Shared > EraData (ModuleScript)
 
 	Purpose:
-		Single source of truth for the "element/color" system — the classic
-		four elements (Fire, Air, Earth, Water), which is what board tiles,
-		creature cards, and chain bonuses actually key off. Each element is
-		additionally skinned in one distinct retrofuturism "era" for visual/
-		creature flavor only (DisplayName/Color below carry that flavor) —
-		the era is a skin, the element key is the mechanic. Fixed at these 4
-		by design decision; the roster used to be open-ended back when eras
-		themselves were the element system (see CLAUDE.md), that's no longer
-		the case now that eras are a flavor layer instead.
+		Single source of truth for the classic four-element system — Fire,
+		Air, Earth, and Water. This is the mechanical unit: board tiles,
+		creature cards, and chain bonuses all key off these four element
+		ids. Each element is skinned in one retrofuturism era for visual/
+		creature flavor only (EraName/EraFlavor below) — the era is
+		cosmetic, the element is the mechanic. Fixed at these 4 by design
+		decision, not open-ended.
 
 	Usage:
 		local EraData = require(game:GetService("ReplicatedStorage").Shared.EraData)
-		local era = EraData.Eras["Fire"]
-		print(era.DisplayName, era.Color)
+		local element = EraData.Eras["Fire"]
+		print(element.DisplayName, element.EraName, element.Color)
 ]]
 
 local EraData = {}
 
--- Placeholder colors for greybox/visualization purposes only — not final art
--- direction. Each element keeps its retrofuturism-era skin's color identity:
--- Fire = Laser Grid, Air = Early Cyber, Earth = Cassette Futurism, Water = Frutiger Aero.
+-- Placeholder colors for greybox/visualization purposes only — not final art direction.
 EraData.Eras = {
 	Fire = {
 		DisplayName = "Fire",
-		Color = Color3.fromRGB(255, 45, 185), -- Laser Grid: neon grid / chrome airbrush
+		EraName = "Laser Grid",
+		EraFlavor = "1980s corporate future: neon grids, reflective glass, chrome airbrushing",
+		Color = Color3.fromRGB(255, 45, 185), -- neon grid / chrome airbrush
 	},
 	Air = {
 		DisplayName = "Air",
-		Color = Color3.fromRGB(60, 255, 130), -- Early Cyber: phosphor-green terminal
+		EraName = "Early Cyber",
+		EraFlavor = "Tron-grid, phosphor-green terminal, digital-frontier utopianism",
+		Color = Color3.fromRGB(60, 255, 130), -- phosphor-green terminal
 	},
 	Earth = {
 		DisplayName = "Earth",
-		Color = Color3.fromRGB(196, 172, 130), -- Cassette Futurism: beige plastic / analog tape
+		EraName = "Cassette Futurism",
+		EraFlavor = "beige plastic, tape reels, analog-optimism (Nostromo-computer energy)",
+		Color = Color3.fromRGB(196, 172, 130), -- beige plastic / analog tape
 	},
 	Water = {
 		DisplayName = "Water",
-		Color = Color3.fromRGB(110, 210, 255), -- Frutiger Aero: glossy blue/green aqua
+		EraName = "Frutiger Aero",
+		EraFlavor = "glossy blue/green, translucent plastic, dew-drop/nature-tech optimism",
+		Color = Color3.fromRGB(110, 210, 255), -- glossy blue/green aqua
 	},
 }
 

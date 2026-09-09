@@ -31,8 +31,14 @@
 		blank means neutral. Only works on unclaimed tiles — see
 		TerraformService's header for why owned tiles aren't supported yet.
 
+		Cast Spell / Use Item call CardEffectService (see its header for what
+		Signal Boost/Ninth Signal Charm actually do). Cast Spell only needs a
+		card id — it's a self-buff queued for your next Challenge. Use Item
+		needs TargetTileBox too, the project's first explicit tile-id target:
+		it must be a tile you're currently defending.
+
 	Server contract (see ReplicatedStorage > Shared > Remotes):
-		Client -> Server: RollRequest, SummonRequest(cardId), ChallengeRequest(cardId), PayTollRequest, EndTurnRequest, TerraformRequest(targetEra)
+		Client -> Server: RollRequest, SummonRequest(cardId), ChallengeRequest(cardId), PayTollRequest, EndTurnRequest, TerraformRequest(targetEra), CastSpellRequest(cardId), UseItemRequest(cardId, tileId)
 		Server -> Client: StateUpdated(snapshot), ActionResult(message)
 ]]
 
@@ -59,7 +65,7 @@ local BUTTON_COLOR = Color3.fromRGB(225, 225, 225)
 
 local frame = Instance.new("Frame")
 frame.Name = "Panel"
-frame.Size = UDim2.fromOffset(400, 440)
+frame.Size = UDim2.fromOffset(400, 510)
 frame.Position = UDim2.fromOffset(20, 20)
 frame.BackgroundColor3 = PANEL_COLOR
 frame.BorderSizePixel = 1
@@ -144,9 +150,51 @@ local challengeButton = createButton("ChallengeButton", "Challenge", 3)
 local payTollButton = createButton("PayTollButton", "Pay Toll", 4)
 local endTurnButton = createButton("EndTurnButton", "End Turn", 5)
 
+local targetTileBox = Instance.new("TextBox")
+targetTileBox.Name = "TargetTileBox"
+targetTileBox.LayoutOrder = 7
+targetTileBox.Size = UDim2.new(1, 0, 0, 26)
+targetTileBox.BackgroundColor3 = INPUT_COLOR
+targetTileBox.TextColor3 = TEXT_COLOR
+targetTileBox.Font = FONT
+targetTileBox.TextSize = 14
+targetTileBox.PlaceholderText = "target tile id (Use Item only)"
+targetTileBox.Text = ""
+targetTileBox.ClearTextOnFocus = false
+targetTileBox.Parent = frame
+
+local effectButtonRow = Instance.new("Frame")
+effectButtonRow.Name = "EffectButtonRow"
+effectButtonRow.LayoutOrder = 8
+effectButtonRow.Size = UDim2.new(1, 0, 0, 28)
+effectButtonRow.BackgroundTransparency = 1
+effectButtonRow.Parent = frame
+
+local effectButtonRowLayout = Instance.new("UIListLayout")
+effectButtonRowLayout.FillDirection = Enum.FillDirection.Horizontal
+effectButtonRowLayout.Padding = UDim.new(0, 6)
+effectButtonRowLayout.Parent = effectButtonRow
+
+local function createEffectButton(name, text, layoutOrder)
+	local button = Instance.new("TextButton")
+	button.Name = name
+	button.LayoutOrder = layoutOrder
+	button.Size = UDim2.fromOffset(96, 28)
+	button.BackgroundColor3 = BUTTON_COLOR
+	button.TextColor3 = TEXT_COLOR
+	button.Font = FONT
+	button.TextSize = 13
+	button.Text = text
+	button.Parent = effectButtonRow
+	return button
+end
+
+local castSpellButton = createEffectButton("CastSpellButton", "Cast Spell", 1)
+local useItemButton = createEffectButton("UseItemButton", "Use Item", 2)
+
 local eraBox = Instance.new("TextBox")
 eraBox.Name = "EraBox"
-eraBox.LayoutOrder = 7
+eraBox.LayoutOrder = 9
 eraBox.Size = UDim2.new(1, 0, 0, 26)
 eraBox.BackgroundColor3 = INPUT_COLOR
 eraBox.TextColor3 = TEXT_COLOR
@@ -159,7 +207,7 @@ eraBox.Parent = frame
 
 local terraformButton = Instance.new("TextButton")
 terraformButton.Name = "TerraformButton"
-terraformButton.LayoutOrder = 8
+terraformButton.LayoutOrder = 10
 terraformButton.Size = UDim2.new(1, 0, 0, 28)
 terraformButton.BackgroundColor3 = BUTTON_COLOR
 terraformButton.TextColor3 = TEXT_COLOR
@@ -168,7 +216,7 @@ terraformButton.TextSize = 13
 terraformButton.Text = "Terraform"
 terraformButton.Parent = frame
 
-local resultLabel = createLabel("ResultLabel", 9, 60, 14)
+local resultLabel = createLabel("ResultLabel", 11, 60, 14)
 
 local legendLines = {}
 for _, card in ipairs(CardData.Cards) do
@@ -179,7 +227,7 @@ for _, card in ipairs(CardData.Cards) do
 			string.format("%d %s [%s] ST%d/HP%d Cost%d", card.Id, card.Name, eraText, card.ST, card.HP, card.Cost)
 		)
 	else
-		table.insert(legendLines, string.format("%d %s [%s] Cost%d", card.Id, card.Name, card.CardType, card.Cost))
+		table.insert(legendLines, string.format("%d %s [%s] Cost%d - %s", card.Id, card.Name, card.CardType, card.Cost, card.EffectDescription or ""))
 	end
 end
 
@@ -197,6 +245,14 @@ local function getCardIdInput()
 		resultLabel.Text = "Enter a card id first"
 	end
 	return cardId
+end
+
+local function getTargetTileInput()
+	local tileId = tonumber(targetTileBox.Text)
+	if tileId == nil then
+		resultLabel.Text = "Enter a target tile id first"
+	end
+	return tileId
 end
 
 rollButton.Activated:Connect(function()
@@ -223,6 +279,21 @@ end)
 
 endTurnButton.Activated:Connect(function()
 	Remotes.EndTurnRequest:FireServer()
+end)
+
+castSpellButton.Activated:Connect(function()
+	local cardId = getCardIdInput()
+	if cardId ~= nil then
+		Remotes.CastSpellRequest:FireServer(cardId)
+	end
+end)
+
+useItemButton.Activated:Connect(function()
+	local cardId = getCardIdInput()
+	local tileId = getTargetTileInput()
+	if cardId ~= nil and tileId ~= nil then
+		Remotes.UseItemRequest:FireServer(cardId, tileId)
+	end
 end)
 
 terraformButton.Activated:Connect(function()
@@ -276,6 +347,8 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 	payTollButton.TextColor3 = buttonColor
 	endTurnButton.TextColor3 = buttonColor
 	terraformButton.TextColor3 = buttonColor
+	castSpellButton.TextColor3 = buttonColor
+	useItemButton.TextColor3 = buttonColor
 end)
 
 Remotes.ActionResult.OnClientEvent:Connect(function(message)

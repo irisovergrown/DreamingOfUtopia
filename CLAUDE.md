@@ -187,11 +187,14 @@ Systems built so far:
   The cross-system communication layer; every service fires/listens on
   `Signal` instances instead of calling other systems' internals.
 - **`Shared/EraData`** (ModuleScript) — registry of the classic four
-  elements (Fire/Air/Earth/Water), each carrying a display name and
-  placeholder color that reflects its retrofuturism-era flavor skin (Fire=
-  Laser Grid, Air=Early Cyber, Earth=Cassette Futurism, Water=Frutiger
-  Aero — see "Theme & setting"). Fixed at 4 by design decision, not
-  open-ended (was, back when eras were the element system itself).
+  elements (Fire/Air/Earth/Water), each carrying a display name, a
+  placeholder color, and its retrofuturism-era skin as real queryable
+  fields — `EraName` (Fire=Laser Grid, Air=Early Cyber, Earth=Cassette
+  Futurism, Water=Frutiger Aero) and `EraFlavor` (a one-line aesthetic
+  description), see "Theme & setting". The era skin is data UI can read
+  and show, not just a comment next to a color. Fixed at 4 by design
+  decision, not open-ended (was, back when eras were the element system
+  itself).
 - **`Systems/BoardService`** (ModuleScript, server) — authoritative owner
   of the board itself, now **hand-authored**: tiles are Parts placed
   directly in Workspace by the developer (own board designs, not
@@ -237,6 +240,9 @@ Systems built so far:
   its retrofuturism-era skin and a nod to the traditional Paracelsian
   elemental archetype (Tape Gnome=Earth, Laser Salamander=Fire, Phosphor
   Sylph=Air, Dewdrop Undine=Water) — flavor only, no mechanical effect.
+  Spell/Item cards carry an `EffectValue` magnitude (ST bonus / HP bonus)
+  read by CardEffectService — the card data says how much, that module
+  decides what it does.
 - **`Systems/CardService`** (ModuleScript, server) — query API over
   CardData (`GetCard`, `GetAllCards`, `GetCardsByType`, `GetCardsByEra`).
   Deliberately no hand/deck/unlock state yet — that needs MatchService's
@@ -270,7 +276,23 @@ Systems built so far:
   rather than inside BattleService itself; team/alliance still doesn't).
   Calls BoardService/CardService/EconomyService through their public APIs
   directly (layered system on top, same pattern as CardService -> CardData),
-  fires `TileClaimed` / `ChallengeResolved` signals.
+  fires `TileClaimed` / `ChallengeResolved` / `DefenderBuffed` signals.
+  `QueueAttackBuff` / `ApplyDefenderHPBuff` exist so CardEffectService can
+  apply Spell/Item effects without reaching into the defender table
+  directly — this module stays its sole owner. A queued attack buff is
+  additive and consumed (win or lose) on that player's next `ChallengeTile`;
+  a defender HP buff lasts until that tile's defender record is replaced.
+- **`Systems/CardEffectService`** (ModuleScript, server) — resolves what a
+  Spell/Item card actually does when played, layered on CardService/
+  BattleService/EconomyService through their public APIs (same pattern
+  BattleService uses on BoardService/CardService). `CastSpell` (Signal
+  Boost) queues an ST bonus for the caster's next challenge — no target
+  needed. `UseItem` (Ninth Signal Charm) permanently raises the HP of a
+  creature the caster is currently defending a tile with, and needs an
+  explicit target tile id — the project's first action requiring a target
+  beyond "the tile you're standing on", which is what UIService's
+  `TargetTileBox` feeds. An invalid item target refunds the Magic already
+  spent rather than eating it.
 - **`Systems/MatchService`** (ModuleScript, server) — turn order and
   match-end lifecycle. `RegisterPlayer`/`RemovePlayer` maintain a rotation
   (array of userIds in join order); `IsPlayersTurn` / `HasRolledThisTurn` /
@@ -302,15 +324,17 @@ Systems built so far:
   under `ReplicatedStorage > Remotes`, returned as a name-keyed table so
   both sides reference the same instances instead of magic strings:
   `RollRequest`, `SummonRequest(cardId)`, `ChallengeRequest(cardId)`,
-  `PayTollRequest`, `EndTurnRequest`, `TerraformRequest(targetEra)`
+  `PayTollRequest`, `EndTurnRequest`, `TerraformRequest(targetEra)`,
+  `CastSpellRequest(cardId)`, `UseItemRequest(cardId, tileId)`
   (client -> server), `StateUpdated(snapshot)`, `ActionResult(message)`
   (server -> client). Request handlers must read the acting player from
   `OnServerEvent`'s own first argument — never a client-supplied one — to
   stay authoritative.
 - **`Main.server.lua`** (Script, bootstrap/composition root) — requires
   BoardService, MovementService, CardService, EconomyService, BattleService,
-  MatchService, TerraformService, and Remotes. Does NOT spawn tiles — scans
-  `CollectionService:GetTagged("Tile")` itself (same tag BoardService
+  MatchService, TerraformService, CardEffectService, and Remotes. Does NOT
+  spawn tiles — scans `CollectionService:GetTagged("Tile")` itself (same tag
+  BoardService
   scans, kept as a separate scan on purpose: BoardService stays
   instance-agnostic/pure data, this is a visual-only concern) to find the
   hand-placed tile Parts and attach a BillboardGui label to each; wires
@@ -353,10 +377,10 @@ Systems built so far:
   a single Part's `.Position` — this is what let the switch away from the
   old block-rig/Neon-marker placeholders happen without needing a
   Motor6D/joint rig of its own; PivotTo works on any Model regardless of
-  its internal joint structure. The 6 `*Request` RemoteEvents are
+  its internal joint structure. The 8 `*Request` RemoteEvents are
   handled here, each gated by `MatchService.IsPlayersTurn` (roll also
   checks `HasRolledThisTurn`) before calling into
-  Movement/Battle/Economy/Terraform — `sendStateToPlayer`/
+  Movement/Battle/Economy/Terraform/CardEffect — `sendStateToPlayer`/
   `refreshAllPlayerStates` push a per-player state snapshot (including
   turn/match info, and the current turn's userId for CameraService) over
   `StateUpdated` whenever anything relevant changes (movement, balance,
@@ -366,9 +390,12 @@ Systems built so far:
   gray panel, default `SourceSans` font, no custom color theme, no card art
   or animation — kept intentionally undecorated rather than styled) with a
   turn indicator, Magic balance line, current-tile info, a card-id
-  `TextBox`, an era-id `TextBox` (raw `EraData.Eras` keys, listed in the
-  legend), and Roll/Summon/Challenge/Pay Toll/End Turn/Terraform buttons
-  that fire the matching Remote. Action button text dims to gray when it
+  `TextBox`, a target-tile `TextBox` (`TargetTileBox` — the project's first
+  explicit target input, used by Use Item only; every other action just
+  acts on the tile you're standing on), an era-id `TextBox` (raw
+  `EraData.Eras` keys, listed in the legend), and Roll/Summon/Challenge/
+  Pay Toll/End Turn/Cast Spell/Use Item/Terraform buttons that fire the
+  matching Remote. Action button text dims to gray when it
   isn't the local player's turn (visual cue only — the server is the
   actual enforcement). Reads `CardData`/`EraData` directly for the legend
   (safe — pure static Shared data, no security concern). Only talks to the
