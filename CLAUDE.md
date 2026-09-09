@@ -434,15 +434,23 @@ Systems built so far:
   guaranteed to arrive in that order, so the token can genuinely not exist
   on the client yet for a brief moment.
 
+Already authored in the live place (Studio-side content, not code, so it
+lives in the .rbxl rather than this repo — verified present 2026-09-08): a
+16-tile board (ids 1-16, one Start + 15 Property, all tagged and
+attributed), `Models.Player.PlayerTemplate`, and a `Models.Summons` stand-in
+for all four creature cards (single Parts carrying `CardId` 1-4). The game
+is playable end to end today. These are greybox placeholders — real art
+still to come — but the "no models authored yet" gap is closed.
+
 Not yet built: match setup/lobby and 2v2 alliance mode (see MatchService's
 header for what's deferred there), persistence/DataStore layer, terraforming
-an owned tile (see TerraformService's header), the actual `Models.Player`/
-`Models.Summons` content itself (Main.server.lua now clones/references
-whatever's placed there — see Main.server.lua's "Model authoring" entry
-above and `tools/create-model-folders.lua` — but no PlayerTemplate or
-per-card creature models have been authored yet, that's the developer's
-own Studio/plugin work, not something this session generates), and the
-rest of UIService (card hand, deck builder, actual visual design).
+an owned tile (see TerraformService's header), tile level-up (BoardService
+exposes `LevelUp` but nothing costs Magic for it or calls it — a core
+Culdcept mechanic still missing), any deck/hand/draw model (CardService is
+a pure static query API, so every player can play any card any number of
+times — UIService asks you to type a card id, which is why the HUD looks
+like a debug panel), and the rest of UIService (card hand, deck builder,
+actual visual design).
 
 ## Working style — how to respond (manual copy-paste sessions)
 
