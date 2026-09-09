@@ -4,7 +4,55 @@ Roblox board/card game (Culdcept-style). See `CLAUDE.md` for the full
 project brief and design context — it loads automatically for Claude Code
 sessions in this repo.
 
-## Working locally with Roblox Studio (optional)
+## Syncing code into Studio (Rojo)
+
+`default.project.json` maps this repo into the Studio tree. With Rojo
+running, editing a file here updates Studio live — no copy-paste, no
+retransmission, and no drift between the repo and the place.
+
+One-time setup, per machine:
+
+```bash
+rojo plugin install
+```
+
+```bash
+rojo serve
+```
+
+Install the CLI first if you don't have it — grab a release binary from
+<https://github.com/rojo-rbx/rojo/releases>, or manage the version with
+[Aftman](https://github.com/LPGhatguy/aftman) (`aftman add rojo-rbx/rojo`).
+`rojo plugin install` installs the Studio plugin itself, so there's no
+marketplace step. Then in Studio: **Plugins → Rojo → Connect**.
+
+### What Rojo manages — and deliberately does not
+
+Rojo **deletes instances under a managed path that aren't in the repo**, so
+the project file is scoped narrowly on purpose. It manages exactly:
+
+| Studio location | Repo path |
+|---|---|
+| `ReplicatedStorage > Shared` | `src/ReplicatedStorage/Shared` |
+| `ServerScriptService > Main` | `src/ServerScriptService/Main.server.lua` |
+| `ServerScriptService > Systems` | `src/ServerScriptService/Systems` |
+| `ServerScriptService > Tests` | `src/ServerScriptService/Tests` |
+| `StarterPlayer > StarterPlayerScripts` | `src/StarterPlayer/StarterPlayerScripts` |
+
+It does **not** manage — and therefore cannot touch or delete:
+
+- **`Workspace`** — the hand-authored board and its tagged tile Parts.
+- **`ReplicatedStorage > Models`** — the Cepter token and creature models.
+- **`ReplicatedStorage > Remotes`** — created at runtime by `Shared.Remotes`.
+- **`ServerStorage > README`** — the git-independent context snapshot.
+
+That split is the whole safety property: scripts live in git and sync one
+way into Studio, while everything you author by hand in Studio stays yours
+and is never overwritten. Widening a `$path` to a whole service (e.g.
+`Workspace`) would put authored content under Rojo's control and it would
+be deleted on the next sync. Don't.
+
+## Working locally with Roblox Studio MCP (optional)
 
 `.mcp.json` declares a `Roblox_Studio` MCP server for direct, live editing
 of an open Roblox Studio place from a **local** Claude Code / Claude
@@ -12,6 +60,10 @@ Desktop session on the same Windows machine as Studio (requires Roblox's
 Studio MCP companion running — launched via `%LOCALAPPDATA%\Roblox\mcp.bat`).
 This only works locally; cloud/web sessions fall back to the manual
 copy-paste workflow described in `CLAUDE.md`.
+
+With Rojo handling script sync, MCP is now for the things Rojo can't do:
+inspecting the live tree, reading Studio-authored board/model data, running
+the test suite in a playtest, and driving verification.
 
 ## Repo layout
 

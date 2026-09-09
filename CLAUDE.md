@@ -547,6 +547,42 @@ state; a board graph replaces the sorted-ID loop; ordered value-transforming
 effect hooks replace fire-and-forget signals; owned, consumed card instances
 replace a static registry players index by typing a number.
 
+## Getting code into Studio — Rojo (decided 2026-09-08)
+
+`default.project.json` syncs the repo into Studio. This replaced hand
+copy-paste and MCP retransmission after Milestone 0, where twelve
+retransmissions through the MCP bridge left three files silently drifted
+between repo and place — caught only by checksumming every script.
+
+Rojo **deletes instances under a managed path that aren't in the repo**, so
+the project tree is scoped deliberately. It manages `ReplicatedStorage >
+Shared`, `ServerScriptService > Main / Systems / Tests`, and `StarterPlayer >
+StarterPlayerScripts`. It does **not** manage `Workspace` (the authored
+board), `ReplicatedStorage > Models` (Cepter and creature models),
+`ReplicatedStorage > Remotes` (runtime-created), or `ServerStorage > README`.
+Never widen a `$path` to a whole service that contains authored content — see
+README.md for why.
+
+MCP is still used, but for what Rojo cannot do: inspecting the live tree,
+reading Studio-authored board/model data, running the suite in a playtest,
+and driving verification through RemoteEvents.
+
+## Open decisions resolved (2026-09-08)
+
+- **Element vs Era naming.** The brief says element; the code says `Era`
+  everywhere, including the attribute on all 16 board Parts. Decision: new
+  code uses `Element`, and the tile-attribute migration is scripted as part
+  of replacing BoardService in Milestone 2 — not as a separate churn pass
+  over authored board data.
+- **Milestone 2 test board.** Generated: graph data hand-written, throwaway
+  greybox Parts spawned into their own folder. The authored board is left
+  untouched and the test board is disposable.
+- **Card content.** Placeholder library of roughly 20-25 original-named
+  cards, chosen to exercise every mechanic the Milestone 4 battle tests need
+  (Weapon/Armor/Tool/Scroll/Support/First/Last/Critical/Penetration/
+  Neutralize/Reflect/Regenerate/poison/paralysis). Explicitly disposable test
+  content, not a balance proposal or the 60-80 launch library.
+
 ## Testing
 
 Specs live in `ServerScriptService > Tests > Specs`, run by
