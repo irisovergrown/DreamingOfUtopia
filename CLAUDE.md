@@ -183,9 +183,66 @@ running in an automated context).
 
 Systems built so far:
 
-- **`Shared/Signal`** (ModuleScript) — lightweight pub/sub event object.
-  The cross-system communication layer; every service fires/listens on
-  `Signal` instances instead of calling other systems' internals.
+- **`Shared/Signal`** (ModuleScript) — ordered, deterministic pub/sub. The
+  cross-system communication layer; every service fires/listens on `Signal`
+  instances instead of calling other systems' internals. **Rewritten in
+  Milestone 0** and no longer fire-and-forget:
+  - `Fire` is **synchronous** and runs handlers in explicit priority order
+    (lower first, ties by connection order). When it returns, every handler
+    has run. The old version used `task.spawn` over a `pairs()` loop, so
+    handlers ran on separate threads in hash order — fine for repainting a
+    label, unusable for ordered rule effects.
+  - `Fold(value, ...)` threads a value through the handlers, each returning
+    the next value (returning nil leaves it unchanged). This is the
+    primitive behind every ordered modifier pipeline — `ModifyRoll`,
+    `BeforeBattleStats`, toll modifiers. A signal that can only announce
+    cannot express "then halve it."
+  - Handler errors are isolated: a thrower is caught and reported, later
+    handlers still run, and in `Fold` the running value survives.
+  - `FireAsync` keeps the old behavior for presentation work that may
+    yield. **Rules code must never use it.**
+  - Because `Fire` is synchronous, a handler that yields now blocks the
+    firer. That is deliberate — it makes accidental ordering dependencies
+    visible instead of silently racing.
+- **`Shared/Enums`** (ModuleScript) — the controlled vocabulary: `Phase`
+  (the 28 match phases), `Element`, `CardType`, `ItemCategory`, `NodeType`,
+  `SpeedClass`, `TerritoryCommand`, `LandingAction`, `MovementCause`,
+  `BattleOutcome`, `DurationType`, `RejectReason`, `TimingHook`,
+  `Visibility`. Each is a frozen name->name map whose `__index` throws on an
+  unknown key, so a typo is an error rather than a silently-nil comparison.
+  Element ids are canonical: Fire/Water/Air/Earth. A display label (a board
+  showing Earth as "Ground") must never become a second set of ids.
+- **`Shared/RulesConfig`** (ModuleScript) — every tunable rule constant and
+  every rule formula, in one file. Nothing elsewhere may inline a chain
+  multiplier, toll rate, hand size or development cost. Chain multipliers
+  are 1.0/1.5/1.8/2.0/2.2 (capped at 5) and toll multipliers
+  0.2/0.3/0.4/0.6/0.8 — **note these are the TARGET values and do not match
+  what BoardService currently computes**; wiring them up is Milestone 5.
+  Values genuinely uncertain against the source game are marked
+  `UNVERIFIED` with what would settle them (currently lap-heal percent and
+  toll rounding mode). Land value and toll are computed from **integer
+  numerators over a denominator of 10**, never from the decimal tables,
+  because `200 * 0.3` only lands on exactly 60 by IEEE rounding luck and a
+  `floor()` over that arithmetic is one unlucky constant away from charging
+  59. Pure Lua — touches no Roblox API.
+- **`Shared/ActionResult`** (ModuleScript) — the structured return shape for
+  every player action, replacing `success, reason`. `Ok` means the request
+  was accepted and processed; what happened goes in `Payload`, **including
+  losing a battle, which is a successful action with an unfavourable
+  result**. `Ok = false` means refused, nothing spent, nothing moved. This
+  exists because `BattleService.ChallengeTile` returns `false, nil` for
+  "you lost" and `false, "reason"` for "rejected" — opposite events sharing
+  a representation. Results are frozen; `fail` requires a real
+  `Enums.RejectReason`.
+- **`Shared/BoardDefinitions/CurrentLoop`** (ModuleScript, data) — the board
+  actually in the place, expressed as graph data: 16 nodes in a one-way
+  ring, one castle (tile 1), no forts, no junctions, one area. A faithful
+  description of *current* behavior, not a target board — a degenerate
+  graph with one exit per node walks identically to the sorted-ID loop, so
+  the graph movement system can be proved against a board whose correct
+  output is already known. Node ids ("T1") are separate from `StudioTileId`
+  (the number in each Part's `Id` attribute) so re-authoring geometry never
+  renames a graph node.
 - **`Shared/EraData`** (ModuleScript) — registry of the classic four
   elements (Fire/Air/Earth/Water), each carrying a display name, a
   placeholder color, and its retrofuturism-era skin as real queryable
@@ -293,6 +350,23 @@ Systems built so far:
   beyond "the tile you're standing on", which is what UIService's
   `TargetTileBox` feeds. An invalid item target refunds the Magic already
   spent rather than eating it.
+- **`Systems/RandomService`** (ModuleScript, server) — the only source of
+  randomness in a match, so a test can pin a seed and replay deterministically.
+  Deliberately **not** Roblox's `Random`: that generator's algorithm is
+  unspecified, so a recorded seed is not guaranteed to reproduce the same
+  match on a later engine version, and it cannot run outside Studio. This is
+  a Lehmer/MINSTD generator written out in full — same seed, same sequence,
+  anywhere. `NextInteger` derives from the high-order float rather than the
+  weak low bits. `Shuffle` is Fisher-Yates. Clients receive rolls as
+  results, never a seed they could run forward.
+- **`Systems/BoardDefinitionValidator`** (ModuleScript, server) — rejects
+  malformed boards at load time. Catches duplicate node ids, edges pointing
+  at renamed nodes, nodes with no outgoing edge (an unrecoverable movement
+  softlock), unreachable nodes, warps with missing or dangling destinations,
+  Castle nodes absent from `CastleNodeIds`, and required fort types no node
+  provides (which would make a lap impossible to complete). Reports **every**
+  problem at once rather than stopping at the first. Pure logic — a board is
+  data; whether Parts exist to render it belongs to the rendering layer.
 - **`Systems/MatchService`** (ModuleScript, server) — turn order and
   match-end lifecycle. `RegisterPlayer`/`RemovePlayer` maintain a rotation
   (array of userIds in join order); `IsPlayersTurn` / `HasRolledThisTurn` /
@@ -451,6 +525,66 @@ a pure static query API, so every player can play any card any number of
 times — UIService asks you to type a card id, which is why the HUD looks
 like a debug panel), and the rest of UIService (card hand, deck builder,
 actual visual design).
+
+## Target architecture and milestones
+
+The project is being rebuilt against a Culdcept Saga fidelity brief. The
+mechanical target is Saga's *rules and timing model*; the creative identity
+(names, art, era skins, lore) stays original. The demand is not more
+features — it is that every phase, choice, rule exception, timing window and
+resource change has a named owner, an input contract, a resolution order and
+a test.
+
+Milestones, in order: **M0 safety net and schemas** (done), M1 match/turn
+state machine, M2 graph movement, M3 book/hand/card lifecycle, M4 landing and
+battle, M5 territory and full economy, M6 card/status/special-node engine,
+M7 content and presentation, M8 secondary-system skeletons. Build a complete
+local match before matchmaking, campaign or monetization; those get interfaces
+early and skeletal implementations.
+
+Four inversions define the work: a phase state machine replaces implicit turn
+state; a board graph replaces the sorted-ID loop; ordered value-transforming
+effect hooks replace fire-and-forget signals; owned, consumed card instances
+replace a static registry players index by typing a number.
+
+## Testing
+
+Specs live in `ServerScriptService > Tests > Specs`, run by
+`Tests.TestRunner`. A spec is `{ Name, Tests = { {description, fn}, ... } }` —
+an ordered array, not a keyed table, so report lines do not shuffle between
+runs.
+
+**Run them in a playtest, not in Edit.** Roblox caches `require` per Edit
+session, so a module edited after being required once returns the stale table
+for the rest of that session and the suite silently tests old code. Start a
+playtest and run against the Server datamodel:
+
+```lua
+local Tests = game.ServerScriptService.Tests
+print(require(Tests.TestRunner).runAll(Tests.Specs))
+```
+
+**The MCP `execute_luau` sandbox is not the running game.** Its calls share a
+module cache with each other but *not* with `Main.server.lua` — verified by
+Main's signals showing zero handlers from inside it. So the suite tests
+services in isolation and cannot corrupt a live match, but equally cannot
+verify Main's wiring, the HUD, or a real turn. For that, fire a RemoteEvent
+from the **Client** datamodel: remotes cross the network layer rather than
+the module cache, so they reach the real server.
+
+`CharacterizationSpec` deliberately pins the CURRENT formulas, several of
+which are provably wrong against the target (chain multiplier is linear
++0.5/tile; toll multipliers are 0.2/0.35/0.5/0.65/0.8; terraform costs
+50 + 30/level). Each such test names what it becomes. When Milestone 5
+changes the formulas, exactly these tests should fail — the gap between
+"expected to fail" and "actually failed" is the blast radius.
+
+Two Luau constraints found the hard way, both in `Enums`:
+- A metatable must be attached **before** `table.freeze`; `setmetatable` on a
+  frozen table throws.
+- `table.freeze` **refuses** a table whose metatable is protected with
+  `__metatable`, so an enum cannot have both. Freezing is the stronger
+  guarantee and subsumes it.
 
 ## Working style — how to respond (manual copy-paste sessions)
 
