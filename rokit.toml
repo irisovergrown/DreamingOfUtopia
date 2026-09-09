@@ -1,0 +1,11 @@
+# Tools managed by Rokit (https://github.com/rojo-rbx/rokit).
+#
+# Rokit resolves tools from the nearest manifest, so this has to live in the
+# repo root rather than in a home directory — otherwise `rojo` works in the
+# folder where you ran `rokit init` and nowhere else.
+#
+# Committing this pins the same Rojo version across every machine this project
+# is developed on. Run `rokit install` once per machine to link the tools.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.0"
