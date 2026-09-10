@@ -67,11 +67,12 @@ function CardEffectService.UseItem(player, cardId, tileId)
 		return false, spendReason
 	end
 
-	local success, reason = BattleService.ApplyDefenderHPBuff(player, tileId, card.EffectValue or 0)
-	if not success then
+	-- ApplyDefenderHPBuff returns an ActionResult since Milestone 4.
+	local applied = BattleService.ApplyDefenderHPBuff(player, tileId, card.EffectValue or 0)
+	if not applied.Ok then
 		-- Refund — the item wasn't actually used if there was nothing valid to equip it to.
 		EconomyService.AddMagic(player, card.Cost)
-		return false, reason
+		return false, applied.Message
 	end
 
 	return true, nil

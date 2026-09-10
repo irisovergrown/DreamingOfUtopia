@@ -133,29 +133,51 @@ local function buildTileView(tileId)
 	return view
 end
 
--- Exactly one hand is on screen at a time: the ACTIVE player's. Its owner
--- sees it face up; everyone else sees the same number of card backs. When the
--- turn passes, the next player's hand becomes the visible one.
+-- Whose hand is on screen. Normally the active player's, but a battle's
+-- defender item window belongs to the DEFENDER — and a defender who cannot see
+-- their own hand cannot choose an item from it. So the spotlight follows
+-- whoever is currently entitled to decide, which is the same rule as "the
+-- player taking their turn sees their cards", stated generally enough to cover
+-- the one phase where the decider is not the turn holder.
+local function spotlightUserId()
+	local orchestrator = _sources.Orchestrator
+	if orchestrator == nil then
+		return nil
+	end
+
+	local validator = _sources.Validator
+	if validator ~= nil then
+		local actor = validator.getExpectedActor(orchestrator.GetPhase())
+		if actor == Enums.Actor.Defender then
+			return _sources.GetDefenderId and _sources.GetDefenderId() or nil
+		end
+	end
+
+	return orchestrator.GetActivePlayerId()
+end
+
+-- Exactly one hand is on screen at a time. Its owner sees it face up;
+-- everyone else sees the same number of card backs in the same place.
 --
 -- The secrecy is server-side, not a client-side flip. Card identities are put
 -- in this table only when the recipient owns them, so an opponent's client is
 -- never sent the answer it would need to cheat — `Cards` is genuinely absent,
 -- not merely hidden. `Count` is public because a hand size is public
 -- information in Culdcept; the contents are not.
-local function buildHandView(recipientUserId, activePlayerId)
-	if activePlayerId == nil then
+local function buildHandView(recipientUserId, ownerUserId)
+	if ownerUserId == nil then
 		return nil
 	end
 
-	local isOwner = recipientUserId == activePlayerId
+	local isOwner = recipientUserId == ownerUserId
 	local view = {
-		OwnerUserId = activePlayerId,
+		OwnerUserId = ownerUserId,
 		IsFaceUp = isOwner,
-		Count = _sources.GetHandCount and _sources.GetHandCount(activePlayerId) or 0,
+		Count = _sources.GetHandCount and _sources.GetHandCount(ownerUserId) or 0,
 	}
 
 	if isOwner and _sources.GetHand then
-		view.Cards = _sources.GetHand(activePlayerId)
+		view.Cards = _sources.GetHand(ownerUserId)
 	end
 
 	return view
@@ -216,7 +238,7 @@ function SnapshotService.Build(userId)
 	end
 
 	snapshot.CurrentTile = buildTileView(snapshot.You.TileId)
-	snapshot.HandView = buildHandView(userId, snapshot.ActivePlayerId)
+	snapshot.HandView = buildHandView(userId, spotlightUserId())
 
 	return snapshot
 end

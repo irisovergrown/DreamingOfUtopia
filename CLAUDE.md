@@ -627,11 +627,46 @@ opponent's snapshot has no `Cards` field at all. `Count` is public because hand
 size is public in Culdcept; contents are not. Cards render as rounded
 rectangles with text — no art yet.
 
+**Milestone 4 is complete.** A battle is a nested state machine:
+`BeginInvasion -> AwaitingAttackerItem -> AwaitingDefenderItem -> Resolved`.
+The invader commits first and the defender chooses knowing what was committed;
+that order is enforced structurally, since the defender's function refuses to
+run until the attacker's has.
+
+**The HP defect is fixed.** A defender keeps `BaseMHP` / `BonusMHP` /
+`CurrentHP`, and the land bonus is computed fresh each battle from the tile's
+CURRENT element and level. Nothing about the land is ever written into the
+creature, so a terraform or level change is simply picked up next battle —
+which is what will let M5 lift the unclaimed-only terraform restriction.
+Temporary battle HP (land bonus, armour) absorbs damage **before** persistent
+health; the pool is identical either way, but it decides how much damage a
+survivor carries. UNVERIFIED against the source game.
+
+Speed classes rank First > Normal > Last, higher strikes first, invader wins a
+tie — one comparison that reproduces the brief's whole matrix including a
+faster *defender*. A lethal first strike ends the battle.
+
+Keywords read from card data, never card names: First, Last, Critical,
+Penetration, Neutralize, Reflect, Regenerate, Support. Scrolls bypass the land
+bonus and ordinary Neutralize/Reflect.
+
+`MatchOrchestrator.SubmitIntent` gained an `entitledUserId` parameter because
+of this milestone: during `DefenderItemChoice` the **defender** submits, not
+the turn holder, and hard-coding "active player" made that impossible. The
+hand spotlight follows the same rule — whoever is currently entitled to decide
+sees their own cards.
+
+**Not done, honestly:** poison and paralysis. The brief lists them here, but
+they are statuses with durations outliving a battle and StatusService is M6;
+faking them as battle-local flags would pass a test and model the wrong thing.
+`BothDestroyed` is handled but unreachable with the current keywords — Reflect
+zeroes incoming damage and so spares the reflector.
+
 Milestones, in order: **M0 safety net and schemas** (done), **M1 match/turn
 state machine** (done), **M2 graph movement** (done), **M3 book/hand/card
-lifecycle** (done), M4 landing and
-battle, M5 territory and full economy, M6 card/status/special-node engine,
-M7 content and presentation, M8 secondary-system skeletons. Build a complete
+lifecycle** (done), **M4 landing and battle** (done), M5 territory and full
+economy, M6 card/status/special-node engine, M7 content and presentation,
+M8 secondary-system skeletons. Build a complete
 local match before matchmaking, campaign or monetization; those get interfaces
 early and skeletal implementations.
 

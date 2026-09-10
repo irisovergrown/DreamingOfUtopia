@@ -211,6 +211,28 @@ local buttonDefinitions = {
 			return { InstanceId = selectedInstanceId }
 		end,
 	},
+	-- Two buttons for one intent: committing an item and declining are the
+	-- same decision, and declining has to be a real choice rather than the
+	-- absence of one.
+	{
+		Name = "UseItemButton",
+		Text = "Use Item",
+		Intent = Intent.ChooseBattleItem,
+		Payload = function()
+			if selectedInstanceId == nil then
+				return nil, "select an item from your hand"
+			end
+			return { InstanceId = selectedInstanceId }
+		end,
+	},
+	{
+		Name = "NoItemButton",
+		Text = "No Item",
+		Intent = Intent.ChooseBattleItem,
+		Payload = function()
+			return {}
+		end,
+	},
 }
 
 local buttons = {}
@@ -238,7 +260,9 @@ for order, definition in ipairs(buttonDefinitions) do
 		submit(definition.Intent, payload)
 	end)
 
-	buttons[definition.Intent] = button
+	-- Keyed by name, not by intent: "Use Item" and "No Item" send the same
+	-- intent, and keying by intent would let one silently replace the other.
+	buttons[definition.Name] = { Button = button, Intent = definition.Intent }
 end
 
 -- === The hand ===============================================================
@@ -562,11 +586,11 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(snapshot)
 
 	-- Enabled state comes straight from the server's legal-intent list, so
 	-- the buttons cannot offer something the server would refuse.
-	for intent, button in pairs(buttons) do
-		local enabled = isLegal(intent)
-		button.TextColor3 = enabled and TEXT_COLOR or DIM_TEXT_COLOR
-		button.BackgroundColor3 = enabled and BUTTON_COLOR or BUTTON_DIM_COLOR
-		button.AutoButtonColor = enabled
+	for _, entry in pairs(buttons) do
+		local enabled = isLegal(entry.Intent)
+		entry.Button.TextColor3 = enabled and TEXT_COLOR or DIM_TEXT_COLOR
+		entry.Button.BackgroundColor3 = enabled and BUTTON_COLOR or BUTTON_DIM_COLOR
+		entry.Button.AutoButtonColor = enabled
 	end
 end)
 

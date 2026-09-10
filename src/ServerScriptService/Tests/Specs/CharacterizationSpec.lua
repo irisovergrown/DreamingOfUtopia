@@ -159,19 +159,20 @@ return {
 			resetBoard()
 		end },
 
-		{ "CURRENT effective HP fuses the temporary land bonus into one number", function(t)
-			-- The defect the target design separates: land bonus is TEMPORARY
-			-- battle HP and must not be stored as the creature's HP. Because
-			-- it is fused here, a later element change leaves the cached value
-			-- stale -- which is the whole reason terraforming is restricted to
-			-- unclaimed tiles today.
-			resetBoard()
-
-			-- Card 1 is Tape Gnome: Earth, 60 HP. Tile 2 is Earth, tile 3 Fire.
-			t:Equal(BattleService.GetEffectiveHP(1, 2), 70, "matching element: 60 + 10 land bonus")
-			t:Equal(BattleService.GetEffectiveHP(1, 3), 60, "mismatched element: no bonus")
-
-			resetBoard()
+		{ "FIXED in Milestone 4: the land bonus is no longer fused into HP", function(t)
+			-- This test previously pinned the defect: GetEffectiveHP returned
+			-- 60 + 10 as one number, so a creature's stored health silently
+			-- included a bonus that belonged to the tile. That is what forced
+			-- terraforming to be restricted to unclaimed land -- changing the
+			-- element afterwards left the cached value wrong with no way to
+			-- detect it.
+			--
+			-- Milestone 4 separated them: a creature keeps BaseMHP/BonusMHP/
+			-- CurrentHP, and the land bonus is computed per battle from the
+			-- tile's CURRENT element and level. The old function is gone, and
+			-- this now records the correct behaviour instead.
+			t:Nil(rawget(BattleService, "GetEffectiveHP"), "the fused accessor no longer exists")
+			t:NotNil(BattleService.GetLandBonusFor, "replaced by a computed bonus")
 		end },
 
 		{ "CURRENT terraform cost is 50 + 30/level, +50 for a specific element", function(t)

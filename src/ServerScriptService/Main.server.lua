@@ -101,8 +101,13 @@ MovementService.Init({
 	Random = RandomService.default(),
 })
 EconomyService.Init() -- subscribes to LapService.LapCompleted
-BattleService.Init()
 DeckService.Init({ Random = RandomService.default() })
+BattleService.Init({
+	Board = BoardService,
+	Card = CardService,
+	Economy = EconomyService,
+	Deck = DeckService, -- battles consume and return real cards
+})
 
 BoardVisualService.Init({
 	Board = BoardService,
@@ -128,9 +133,9 @@ SnapshotService.Init({
 	GetHand = DeckService.GetHand,
 	GetBookCount = DeckService.GetBookCount,
 	GetDiscardCount = DeckService.GetDiscardCount,
-	GetDefenderId = function()
-		return nil -- no battle phases entered until Milestone 4
-	end,
+	-- Who owes the defender's item choice, so ActionValidator can entitle
+	-- them rather than the active player during that one phase.
+	GetDefenderId = BattleService.GetDefenderUserId,
 })
 
 if #CollectionService:GetTagged("Tile") == 0 then
@@ -247,17 +252,26 @@ end
 -- What the player may actually do where they landed. Returning an empty list
 -- means the turn simply ends — landing somewhere with no legal action is a
 -- normal outcome, not an error.
+-- The brief's landing action matrix. An empty list means the turn simply ends:
+-- landing somewhere with nothing to do is a normal outcome, not an error.
 local function landingActionsFor(userId, tileId)
 	local tile = BoardService.GetTile(tileId)
 	if tile == nil or tile.TileType ~= "Property" then
-		return {}
+		return {} -- the castle and special nodes resolve on their own
 	end
+
 	if tile.Owner == nil then
+		-- Empty: claim it, or walk on.
 		return { Intent.ChooseSummon }
 	end
+
 	if tile.Owner == userId then
-		return {} -- own territory; level-up lands in Milestone 5
+		-- Your own land. Territory commands (level up, terrain change) land in
+		-- Milestone 5; terraforming is offered here because it already exists.
+		return { Intent.ChooseTerritoryCommand }
 	end
+
+	-- Enemy land: invade with a creature, or decline and pay the toll.
 	return { Intent.PayToll, Intent.ChooseSummon }
 end
 
@@ -379,37 +393,82 @@ intentHandlers[Intent.ChooseSummon] = function(player, payload)
 	local tile = BoardService.GetTile(tileId)
 	local isInvasion = tile ~= nil and tile.Owner ~= nil and tile.Owner ~= player.UserId
 
-	local ok, reason
 	if isInvasion then
-		ok, reason = BattleService.ChallengeTile(player, cardId, tileId)
-		if reason ~= nil then
-			-- Rejected outright, so the card was never played and stays in hand.
-			return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = reason }
+		-- An invasion is not resolved here. It opens the battle state machine
+		-- and the turn parks in the item-choice phases until both sides have
+		-- committed. BattleService consumes the card itself.
+		local began = BattleService.BeginInvasion(player.UserId, instanceId, tileId)
+		if not began.Ok then
+			return { Ok = false, Code = began.Code, Message = began.Message }
 		end
 
-		-- The challenge resolved, so the card is spent either way.
-		DeckService.PlayInstance(player.UserId, instanceId)
-
-		-- A lost challenge is a successful action with an unfavourable
-		-- outcome; the visitor then owes the toll.
-		if not ok then
-			EconomyService.PayToll(player, tileId)
-		end
-		task.spawn(endTurnAndAdvance)
-		return { Ok = true, Message = ok and ("Won tile #" .. tileId) or "Lost the challenge; toll paid" }
+		advanceThrough({ Phase.BattleSetup, Phase.AttackerItemChoice }, "invasion declared")
+		pushStateToAll()
+		return { Ok = true, Message = "Invading tile #" .. tileId }
 	end
 
-	ok, reason = BattleService.SummonCreature(player, cardId, tileId)
-	if not ok then
-		return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = tostring(reason) }
+	local claimed = BattleService.SummonCreature(player.UserId, instanceId, tileId)
+	if not claimed.Ok then
+		return { Ok = false, Code = claimed.Code, Message = claimed.Message }
 	end
-
-	-- Consumed only after the summon succeeded, so a refused summon never
-	-- costs the card.
-	DeckService.PlayInstance(player.UserId, instanceId)
 
 	task.spawn(endTurnAndAdvance)
 	return { Ok = true, Message = "Claimed tile #" .. tileId }
+end
+
+-- Applies a resolved battle: the toll if one is owed, then the turn ends.
+-- Ownership and creature state were already settled inside BattleService.
+local function settleBattle(result)
+	advanceThrough({ Phase.BattleResolution }, "battle resolved")
+
+	MatchLogService.Append("BattleResolved", {
+		TileId = result.TileId,
+		Outcome = result.Outcome,
+		Attacker = result.AttackerUserId,
+		Defender = result.DefenderUserId,
+	})
+
+	if result.TollOwed then
+		advanceThrough({ Phase.TollResolution }, "invader owes the toll")
+		local attacker = Players:GetPlayerByUserId(result.AttackerUserId)
+		if attacker then
+			EconomyService.PayToll(attacker, result.TileId)
+		end
+	end
+
+	endTurnAndAdvance()
+end
+
+intentHandlers[Intent.ChooseBattleItem] = function(player, payload)
+	local pending = BattleService.GetPendingBattle()
+	if pending == nil then
+		return { Ok = false, Code = Enums.RejectReason.IllegalAction, Message = "no battle in progress" }
+	end
+
+	-- An absent InstanceId is "No Item", which is always a legal choice.
+	local instanceId = payload and payload.InstanceId
+	if instanceId ~= nil and typeof(instanceId) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidCard, Message = "bad card reference" }
+	end
+
+	if pending.Status == "AwaitingAttackerItem" then
+		local chosen = BattleService.ChooseAttackerItem(player.UserId, instanceId)
+		if not chosen.Ok then
+			return { Ok = false, Code = chosen.Code, Message = chosen.Message }
+		end
+		-- The defender now chooses, knowing what was committed.
+		advanceThrough({ Phase.DefenderItemChoice }, "attacker committed")
+		pushStateToAll()
+		return { Ok = true, Message = instanceId and "Item committed" or "No item" }
+	end
+
+	local resolved = BattleService.ChooseDefenderItem(player.UserId, instanceId)
+	if not resolved.Ok then
+		return { Ok = false, Code = resolved.Code, Message = resolved.Message }
+	end
+
+	task.spawn(settleBattle, resolved.Payload)
+	return { Ok = true, Message = "Battle resolved: " .. resolved.Payload.Outcome }
 end
 
 intentHandlers[Intent.PayToll] = function(player)
@@ -447,9 +506,19 @@ end
 -- be spoofed; nothing in the payload identifies who is asking.
 Remotes.SubmitIntent.OnServerEvent:Connect(function(player, intent, sequence, expectedPhase, payload)
 	local userId = player.UserId
+	local currentPhase = MatchOrchestrator.GetPhase()
 
-	-- 1. Admissibility: active player, fresh sequence, match still running.
-	local admitted = MatchOrchestrator.SubmitIntent(userId, tostring(intent), sequence)
+	-- Who this phase is waiting on. Usually the active player, but a battle's
+	-- defender item window belongs to the DEFENDER, so the entitled user is
+	-- resolved from the phase rather than assumed.
+	local entitledUserId = MatchOrchestrator.GetActivePlayerId()
+	if ActionValidator.getExpectedActor(currentPhase) == Enums.Actor.Defender then
+		entitledUserId = BattleService.GetDefenderUserId()
+	end
+
+	-- 1. Admissibility: right player for this phase, fresh sequence, match
+	-- still running.
+	local admitted = MatchOrchestrator.SubmitIntent(userId, tostring(intent), sequence, entitledUserId)
 	if not admitted.Ok then
 		replyTo(player, intent, sequence, admitted)
 		return
@@ -457,7 +526,6 @@ Remotes.SubmitIntent.OnServerEvent:Connect(function(player, intent, sequence, ex
 
 	-- 2. The client acted on a screen; if the server has moved on since, the
 	-- request is stale by definition rather than merely late.
-	local currentPhase = MatchOrchestrator.GetPhase()
 	if expectedPhase ~= nil and expectedPhase ~= currentPhase then
 		replyTo(player, intent, sequence, {
 			Ok = false,
@@ -472,7 +540,7 @@ Remotes.SubmitIntent.OnServerEvent:Connect(function(player, intent, sequence, ex
 	local allowed = ActionValidator.validate({
 		Phase = currentPhase,
 		ActivePlayerId = MatchOrchestrator.GetActivePlayerId(),
-		DefenderId = nil,
+		DefenderId = BattleService.GetDefenderUserId(),
 		RequesterId = userId,
 		Participants = MatchOrchestrator.GetParticipantSet(),
 	}, intent)

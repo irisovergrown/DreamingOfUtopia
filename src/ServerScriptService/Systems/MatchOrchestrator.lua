@@ -207,7 +207,13 @@ end
 -- The sequence counter is advanced only on acceptance, so a rejected request
 -- does not consume an ordinal and the client's next genuine request is not
 -- knocked out of step by having been refused once.
-function MatchOrchestrator.SubmitIntent(userId, intentName, sequence)
+-- `entitledUserId` overrides who may act, defaulting to the active player.
+-- Milestone 4 made this necessary: during DefenderItemChoice the DEFENDER
+-- submits, not the player whose turn it is, and hard-coding "active player"
+-- here would have made Saga's sequential item order impossible to express.
+-- Which phases entitle whom is ActionValidator's knowledge, so the caller
+-- resolves it and passes the answer in rather than this module guessing.
+function MatchOrchestrator.SubmitIntent(userId, intentName, sequence, entitledUserId)
 	local function reject(code, message)
 		_log.Append("IntentRejected", {
 			UserId = userId,
@@ -226,8 +232,9 @@ function MatchOrchestrator.SubmitIntent(userId, intentName, sequence)
 		return reject(Enums.RejectReason.IllegalAction, "intent name missing")
 	end
 
-	if not MatchOrchestrator.IsActivePlayer(userId) then
-		return reject(Enums.RejectReason.NotYourTurn, "not the active player")
+	local entitled = entitledUserId or _activePlayerId
+	if entitled == nil or entitled ~= userId then
+		return reject(Enums.RejectReason.NotYourTurn, "not the player this phase is waiting on")
 	end
 
 	if type(sequence) ~= "number" or sequence % 1 ~= 0 then
