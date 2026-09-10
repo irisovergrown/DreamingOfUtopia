@@ -133,6 +133,34 @@ local function buildTileView(tileId)
 	return view
 end
 
+-- Exactly one hand is on screen at a time: the ACTIVE player's. Its owner
+-- sees it face up; everyone else sees the same number of card backs. When the
+-- turn passes, the next player's hand becomes the visible one.
+--
+-- The secrecy is server-side, not a client-side flip. Card identities are put
+-- in this table only when the recipient owns them, so an opponent's client is
+-- never sent the answer it would need to cheat — `Cards` is genuinely absent,
+-- not merely hidden. `Count` is public because a hand size is public
+-- information in Culdcept; the contents are not.
+local function buildHandView(recipientUserId, activePlayerId)
+	if activePlayerId == nil then
+		return nil
+	end
+
+	local isOwner = recipientUserId == activePlayerId
+	local view = {
+		OwnerUserId = activePlayerId,
+		IsFaceUp = isOwner,
+		Count = _sources.GetHandCount and _sources.GetHandCount(activePlayerId) or 0,
+	}
+
+	if isOwner and _sources.GetHand then
+		view.Cards = _sources.GetHand(activePlayerId)
+	end
+
+	return view
+end
+
 function SnapshotService.Build(userId)
 	local snapshot = SnapshotService.BuildPublic()
 
@@ -149,10 +177,13 @@ function SnapshotService.Build(userId)
 		IsYourTurn = orchestrator and orchestrator.IsActivePlayer(userId) or false,
 		TileId = movement and movement.GetCurrentTile and movement.GetCurrentTile(userId) or nil,
 		NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
-		-- Populated in Milestone 3. Present now so the shape, and the
-		-- guarantee that it is per-recipient, exist before there is anything
-		-- secret to put in it.
-		Hand = {},
+		-- Your own hand, always sent to you because it is yours. What is
+		-- DISPLAYED is decided by HandView, which shows only the active
+		-- player's hand — so on someone else's turn you see their backs
+		-- rather than your own cards.
+		Hand = _sources.GetHand and _sources.GetHand(userId) or {},
+		BookCount = _sources.GetBookCount and _sources.GetBookCount(userId) or 0,
+		DiscardCount = _sources.GetDiscardCount and _sources.GetDiscardCount(userId) or 0,
 		LegalIntents = {},
 	}
 
@@ -185,6 +216,7 @@ function SnapshotService.Build(userId)
 	end
 
 	snapshot.CurrentTile = buildTileView(snapshot.You.TileId)
+	snapshot.HandView = buildHandView(userId, snapshot.ActivePlayerId)
 
 	return snapshot
 end

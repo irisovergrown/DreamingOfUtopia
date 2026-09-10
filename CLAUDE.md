@@ -599,8 +599,37 @@ it was. `expectedPhase` turns a race into a clean rejection: a player who
 clicks a screen the server has moved past gets `StaleSequence` rather than an
 action applied in the wrong phase.
 
+**Milestone 2 is complete.** Movement is a resumable transaction over a board
+graph: `BeginMove` returns Completed or AwaitingChoice, and the remaining
+steps live in the transaction until `ChooseExit` resumes it. `BoardGraphService`
+owns topology only. The reversal rule compares **destinations, not edge ids**,
+because a two-way path is two directed edges and the return route has a
+different id. `LapService` makes a lap mean "every required fort TYPE, then the
+castle" — by type, so bouncing between two Sun forts cannot finish a lap.
+`TestBoard01` carries a T-junction, dead end, two fort types, a mandatory warp
+and a landing warp. **A warp relocates without consuming a step.**
+
+**Milestone 3 is complete.** `DeckService` gives each player a shuffled
+50-card book, a 6-card hand, a discard, and recycling. Cards are **instances**
+with their own ids, so playing one consumes it — a card id can no longer be
+summoned repeatedly. Instance identity is also what makes secrecy possible:
+there is something to withhold.
+
+**Card presentation (decided 2026-09-09, developer's design).** Exactly one
+hand is on screen at a time — the **active player's**, in a Culdcept-style row
+along the bottom. Its owner sees the faces; every other player sees the same
+number of backs in the same place, and the visible hand follows the turn. You
+never see your own cards on someone else's turn.
+
+The secrecy is server-side, not a client-side flip: `SnapshotService.HandView`
+puts card identities in the table **only** when the recipient owns them, so an
+opponent's snapshot has no `Cards` field at all. `Count` is public because hand
+size is public in Culdcept; contents are not. Cards render as rounded
+rectangles with text — no art yet.
+
 Milestones, in order: **M0 safety net and schemas** (done), **M1 match/turn
-state machine** (done), M2 graph movement, M3 book/hand/card lifecycle, M4 landing and
+state machine** (done), **M2 graph movement** (done), **M3 book/hand/card
+lifecycle** (done), M4 landing and
 battle, M5 territory and full economy, M6 card/status/special-node engine,
 M7 content and presentation, M8 secondary-system skeletons. Build a complete
 local match before matchmaking, campaign or monetization; those get interfaces

@@ -116,7 +116,6 @@ local function createTextBox(name, order, placeholder)
 	return box
 end
 
-local cardIdBox = createTextBox("CardIdBox", 6, "card id")
 local elementBox = createTextBox("ElementBox", 7, "element id (blank = neutral)")
 
 local buttonRow = Instance.new("Frame")
@@ -154,6 +153,7 @@ local resultLabel = createLabel("ResultLabel", 10, 54, 14)
 local sequence = 0
 local currentPhase = nil
 local legalIntents = {}
+local selectedInstanceId = nil
 
 local function isLegal(intent)
 	for _, candidate in ipairs(legalIntents) do
@@ -184,11 +184,10 @@ local buttonDefinitions = {
 		Text = "Summon",
 		Intent = Intent.ChooseSummon,
 		Payload = function()
-			local cardId = tonumber(cardIdBox.Text)
-			if cardId == nil then
-				return nil, "enter a card id first"
+			if selectedInstanceId == nil then
+				return nil, "select a card from your hand first"
 			end
-			return { CardId = cardId }
+			return { InstanceId = selectedInstanceId }
 		end,
 	},
 	{ Name = "PayTollButton", Text = "Pay Toll", Intent = Intent.PayToll },
@@ -201,6 +200,17 @@ local buttonDefinitions = {
 		end,
 	},
 	{ Name = "EndTurnButton", Text = "End Turn", Intent = Intent.EndTurn },
+	{
+		Name = "DiscardButton",
+		Text = "Discard",
+		Intent = Intent.DiscardToHandLimit,
+		Payload = function()
+			if selectedInstanceId == nil then
+				return nil, "select the card to discard"
+			end
+			return { InstanceId = selectedInstanceId }
+		end,
+	},
 }
 
 local buttons = {}
@@ -231,26 +241,235 @@ for order, definition in ipairs(buttonDefinitions) do
 	buttons[definition.Intent] = button
 end
 
--- === Card legend ============================================================
+-- === The hand ===============================================================
+--
+-- Culdcept puts the hand along the bottom of the screen, and only one hand is
+-- ever shown: the ACTIVE player's. Its owner sees the faces; everyone else
+-- sees the same number of backs in the same place, so the turn is legible from
+-- any seat without leaking anything.
+--
+-- The secrecy is not enforced here. The server simply does not put card
+-- identities in a snapshot for anyone but the owner, so this code renders
+-- backs because it has nothing else to render.
 
-local legendLines = {}
-for _, card in ipairs(CardData.Cards) do
-	local elementText = card.Era and ElementData.GetEra(card.Era).DisplayName or "Neutral"
-	if card.CardType == "Creature" then
-		table.insert(legendLines, string.format(
-			"%d %s [%s] ST%d/HP%d Cost%d",
-			card.Id, card.Name, elementText, card.ST, card.HP, card.Cost
-		))
+local HAND_CARD_WIDTH = 96
+local HAND_CARD_HEIGHT = 132
+local CARD_BACK_COLOR = Color3.fromRGB(52, 62, 82)
+local CARD_FACE_COLOR = Color3.fromRGB(252, 252, 250)
+local CARD_SELECTED_COLOR = Color3.fromRGB(214, 236, 248)
+
+local handGui = Instance.new("Frame")
+handGui.Name = "Hand"
+handGui.AnchorPoint = Vector2.new(0.5, 1)
+handGui.Position = UDim2.new(0.5, 0, 1, -16)
+handGui.Size = UDim2.fromOffset(HAND_CARD_WIDTH * 6 + 8 * 5, HAND_CARD_HEIGHT + 22)
+handGui.BackgroundTransparency = 1
+handGui.Parent = screenGui
+
+local handLabel = Instance.new("TextLabel")
+handLabel.Name = "HandOwner"
+handLabel.Size = UDim2.new(1, 0, 0, 18)
+handLabel.BackgroundTransparency = 1
+handLabel.Font = FONT
+handLabel.TextSize = 14
+handLabel.TextColor3 = Color3.fromRGB(245, 245, 245)
+handLabel.TextStrokeTransparency = 0.4
+handLabel.Text = ""
+handLabel.Parent = handGui
+
+local handRow = Instance.new("Frame")
+handRow.Name = "Row"
+handRow.Position = UDim2.fromOffset(0, 22)
+handRow.Size = UDim2.new(1, 0, 0, HAND_CARD_HEIGHT)
+handRow.BackgroundTransparency = 1
+handRow.Parent = handGui
+
+local handRowLayout = Instance.new("UIListLayout")
+handRowLayout.FillDirection = Enum.FillDirection.Horizontal
+handRowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+handRowLayout.Padding = UDim.new(0, 8)
+handRowLayout.Parent = handRow
+
+local cardsById = {}
+
+local function styleCardSelection()
+	for instanceId, card in pairs(cardsById) do
+		card.BackgroundColor3 = instanceId == selectedInstanceId and CARD_SELECTED_COLOR or CARD_FACE_COLOR
 	end
 end
+
+local function buildCardFace(instance, order)
+	local card = CardData.Cards[1]
+	for _, definition in ipairs(CardData.Cards) do
+		if definition.Id == instance.CardId then
+			card = definition
+			break
+		end
+	end
+
+	local button = Instance.new("TextButton")
+	button.Name = "Card_" .. instance.InstanceId
+	button.LayoutOrder = order
+	button.Size = UDim2.fromOffset(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
+	button.BackgroundColor3 = CARD_FACE_COLOR
+	button.BorderSizePixel = 0
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.Parent = handRow
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = button
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = card.Era and ElementData.GetEra(card.Era).Color or Color3.fromRGB(170, 170, 170)
+	stroke.Thickness = 2
+	stroke.Parent = button
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.PaddingLeft = UDim.new(0, 7)
+	pad.PaddingRight = UDim.new(0, 7)
+	pad.Parent = button
+
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.fromScale(1, 1)
+	text.BackgroundTransparency = 1
+	text.Font = FONT
+	text.TextSize = 12
+	text.TextColor3 = TEXT_COLOR
+	text.TextXAlignment = Enum.TextXAlignment.Left
+	text.TextYAlignment = Enum.TextYAlignment.Top
+	text.TextWrapped = true
+	text.RichText = true
+
+	local statLine
+	if card.CardType == "Creature" then
+		statLine = string.format("ST %d  HP %d", card.ST, card.HP)
+	else
+		statLine = card.ItemCategory or card.CardType
+	end
+
+	text.Text = string.format(
+		"<b>%s</b>\n%s\n\n%s\n\n<i>%s</i>",
+		card.Name,
+		card.Era and ElementData.GetEra(card.Era).DisplayName or "Neutral",
+		statLine,
+		card.RulesText or ""
+	)
+	text.Parent = button
+
+	local cost = Instance.new("TextLabel")
+	cost.AnchorPoint = Vector2.new(1, 1)
+	cost.Position = UDim2.fromScale(1, 1)
+	cost.Size = UDim2.fromOffset(34, 16)
+	cost.BackgroundTransparency = 1
+	cost.Font = FONT
+	cost.TextSize = 13
+	cost.TextXAlignment = Enum.TextXAlignment.Right
+	cost.TextColor3 = Color3.fromRGB(90, 90, 110)
+	cost.Text = tostring(card.Cost) .. "G"
+	cost.Parent = button
+
+	button.Activated:Connect(function()
+		selectedInstanceId = instance.InstanceId
+		styleCardSelection()
+		resultLabel.Text = "Selected " .. card.Name
+	end)
+
+	cardsById[instance.InstanceId] = button
+	return button
+end
+
+local function buildCardBack(order)
+	local back = Instance.new("Frame")
+	back.Name = "CardBack"
+	back.LayoutOrder = order
+	back.Size = UDim2.fromOffset(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
+	back.BackgroundColor3 = CARD_BACK_COLOR
+	back.BorderSizePixel = 0
+	back.Parent = handRow
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = back
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(96, 110, 140)
+	stroke.Thickness = 2
+	stroke.Parent = back
+
+	local mark = Instance.new("TextLabel")
+	mark.Size = UDim2.fromScale(1, 1)
+	mark.BackgroundTransparency = 1
+	mark.Font = FONT
+	mark.TextSize = 22
+	mark.TextColor3 = Color3.fromRGB(120, 136, 170)
+	mark.Text = "IX"
+	mark.Parent = back
+
+	return back
+end
+
+local function renderHand(handView, yourUserId)
+	for _, child in ipairs(handRow:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
+	cardsById = {}
+
+	if handView == nil then
+		handGui.Visible = false
+		return
+	end
+	handGui.Visible = true
+
+	if handView.IsFaceUp then
+		handLabel.Text = string.format("Your hand — %d/%d", handView.Count, 6)
+		-- A selection is only meaningful while the cards it referred to are
+		-- still shown, so it is dropped whenever the hand is rebuilt from a
+		-- snapshot that no longer contains it.
+		local stillHeld = false
+		for order, instance in ipairs(handView.Cards or {}) do
+			buildCardFace(instance, order)
+			if instance.InstanceId == selectedInstanceId then
+				stillHeld = true
+			end
+		end
+		if not stillHeld then
+			selectedInstanceId = nil
+		end
+		styleCardSelection()
+	else
+		handLabel.Text = string.format("Player %d's hand — %d cards", handView.OwnerUserId, handView.Count)
+		selectedInstanceId = nil
+		for order = 1, handView.Count do
+			buildCardBack(order)
+		end
+	end
+end
+
+-- === Zone counts ============================================================
+-- The card-id legend this replaced only existed so a player could look up a
+-- number to type. Cards are selected from hand now, so the useful thing to
+-- show in that space is where a player's cards actually are.
 
 local elementIds = {}
 for elementId in pairs(ElementData.Eras) do
 	table.insert(elementIds, elementId)
 end
 table.sort(elementIds)
-table.insert(legendLines, "Elements: " .. table.concat(elementIds, ", "))
-legendLabel.Text = table.concat(legendLines, "\n")
+
+local function renderZones(you)
+	legendLabel.Text = string.format(
+		"Book %d   ·   Discard %d\nElements: %s",
+		you.BookCount or 0,
+		you.DiscardCount or 0,
+		table.concat(elementIds, ", ")
+	)
+end
 
 -- === Rendering ==============================================================
 
@@ -324,6 +543,8 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(snapshot)
 	currentPhase = snapshot.Phase
 	legalIntents = snapshot.You.LegalIntents or {}
 	renderRouteChoice(snapshot.You.PendingRoute)
+	renderHand(snapshot.HandView, snapshot.You.UserId)
+	renderZones(snapshot.You)
 
 	if snapshot.MatchComplete then
 		phaseLabel.Text = "Match over"

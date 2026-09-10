@@ -71,6 +71,15 @@ local function stubSources(overrides)
 		GetParticipants = function() return { ALICE, BOB } end,
 		GetParticipantSet = function() return { [ALICE] = true, [BOB] = true } end,
 		GetHandCount = function(userId) return #hands[userId] end,
+		GetHand = function(userId)
+			local hand = {}
+			for index, name in ipairs(hands[userId]) do
+				table.insert(hand, { InstanceId = string.format("%d-%d", userId, index), CardId = index, Name = name })
+			end
+			return hand
+		end,
+		GetBookCount = function() return 44 end,
+		GetDiscardCount = function() return 2 end,
 		GetDefenderId = function() return nil end,
 	}
 
@@ -158,15 +167,75 @@ return {
 			t:Equal(#SnapshotService.Build(BOB).You.LegalIntents, 0, "Bob is offered nothing on Alice's turn")
 		end },
 
-		{ "the private hand field exists and is per recipient before hands do", function(t)
-			-- Milestone 3 fills this in. The shape and the guarantee that it
-			-- is never shared exist first, so secrecy is a property rather
-			-- than a later leak hunt.
+		{ "your own hand is sent to you in full", function(t)
 			SnapshotService.Init(stubSources())
 			local snapshot = SnapshotService.Build(ALICE)
 
-			t:NotNil(snapshot.You.Hand, "hand field is present")
-			t:Equal(#snapshot.You.Hand, 0, "and empty until Milestone 3")
+			t:Equal(#snapshot.You.Hand, 3, "Alice receives her three cards")
+			t:NotNil(snapshot.You.Hand[1].InstanceId)
+			t:Equal(snapshot.You.BookCount, 44)
+			t:Equal(snapshot.You.DiscardCount, 2)
+		end },
+
+		{ "exactly one hand is shown, and it is the active player's", function(t)
+			-- Culdcept shows a single hand in a single place. Whose it is
+			-- follows the turn, so the board reads the same from every seat.
+			SnapshotService.Init(stubSources({ ActivePlayerId = ALICE }))
+
+			t:Equal(SnapshotService.Build(ALICE).HandView.OwnerUserId, ALICE)
+			t:Equal(SnapshotService.Build(BOB).HandView.OwnerUserId, ALICE, "Bob also sees Alice's hand, not his own")
+		end },
+
+		{ "the active player sees their hand face up", function(t)
+			SnapshotService.Init(stubSources({ ActivePlayerId = ALICE }))
+			local view = SnapshotService.Build(ALICE).HandView
+
+			t:True(view.IsFaceUp)
+			t:Equal(#view.Cards, 3, "with the actual cards")
+			t:Equal(view.Count, 3)
+		end },
+
+		{ "everyone else sees backs, and is never sent the faces", function(t)
+			-- The security property. Card identities are ABSENT from the
+			-- opponent's snapshot rather than merely flagged hidden, so a
+			-- modified client has nothing to reveal.
+			SnapshotService.Init(stubSources({ ActivePlayerId = ALICE }))
+			local view = SnapshotService.Build(BOB).HandView
+
+			t:False(view.IsFaceUp, "Bob sees backs")
+			t:Equal(view.Count, 3, "he can count them")
+			t:Nil(view.Cards, "but the identities are simply not in his snapshot")
+		end },
+
+		{ "the visible hand follows the turn", function(t)
+			SnapshotService.Init(stubSources({ ActivePlayerId = BOB }))
+
+			local bobsView = SnapshotService.Build(BOB).HandView
+			t:True(bobsView.IsFaceUp, "on Bob's turn Bob sees his own")
+			t:Equal(#bobsView.Cards, 1)
+
+			local alicesView = SnapshotService.Build(ALICE).HandView
+			t:False(alicesView.IsFaceUp, "and Alice now sees backs")
+			t:Nil(alicesView.Cards)
+			t:Equal(alicesView.Count, 1, "one back, because Bob holds one card")
+		end },
+
+		{ "no hand is shown before a turn has begun", function(t)
+			SnapshotService.Init(stubSources({ ActivePlayerId = false }))
+			-- `false` rather than nil: a nil override cannot be expressed in a
+			-- Lua table literal, so the stub treats false as "nobody active".
+			local sources = stubSources()
+			sources.Orchestrator = {
+				GetPhase = function() return Phase.WaitingForPlayers end,
+				GetTurnNumber = function() return 0 end,
+				GetRoundNumber = function() return 0 end,
+				GetActivePlayerId = function() return nil end,
+				IsMatchComplete = function() return false end,
+				IsActivePlayer = function() return false end,
+			}
+			SnapshotService.Init(sources)
+
+			t:Nil(SnapshotService.Build(ALICE).HandView, "nothing to show yet")
 		end },
 
 		{ "the current tile view reflects the recipient's own position", function(t)

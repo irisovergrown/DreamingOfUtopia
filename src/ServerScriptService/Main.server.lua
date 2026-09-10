@@ -47,6 +47,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 
 local Enums = require(ReplicatedStorage.Shared.Enums)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local RulesConfig = require(ReplicatedStorage.Shared.RulesConfig)
 
 local Systems = ServerScriptService.Systems
 local MatchLogService = require(Systems.MatchLogService)
@@ -64,6 +65,7 @@ local EconomyService = require(Systems.EconomyService)
 local BattleService = require(Systems.BattleService)
 local TerraformService = require(Systems.TerraformService)
 local CardEffectService = require(Systems.CardEffectService)
+local DeckService = require(Systems.DeckService)
 
 local Phase = Enums.Phase
 local Intent = Enums.Intent
@@ -100,6 +102,7 @@ MovementService.Init({
 })
 EconomyService.Init() -- subscribes to LapService.LapCompleted
 BattleService.Init()
+DeckService.Init({ Random = RandomService.default() })
 
 BoardVisualService.Init({
 	Board = BoardService,
@@ -119,9 +122,12 @@ SnapshotService.Init({
 	Card = CardService,
 	GetParticipants = MatchOrchestrator.GetParticipants,
 	GetParticipantSet = MatchOrchestrator.GetParticipantSet,
-	GetHandCount = function()
-		return 0 -- no hands until Milestone 3
-	end,
+	GetHandCount = DeckService.GetHandCount,
+	-- Supplied to SnapshotService, which decides who is allowed to see the
+	-- contents. It sends identities only to the hand's owner.
+	GetHand = DeckService.GetHand,
+	GetBookCount = DeckService.GetBookCount,
+	GetDiscardCount = DeckService.GetDiscardCount,
 	GetDefenderId = function()
 		return nil -- no battle phases entered until Milestone 4
 	end,
@@ -177,9 +183,30 @@ local function beginTurnFor(userId)
 		return
 	end
 
-	-- Draw and SpellChoice are traversed, not skipped: the phases are real
-	-- and logged, they simply have nothing to do until there is a book.
-	advanceThrough({ Phase.Draw, Phase.SpellChoice, Phase.RollReady }, "no book yet")
+	if not advanceThrough({ Phase.Draw }, "start of turn draw") then
+		return
+	end
+
+	local drawn = DeckService.Draw(userId, 1)
+	MatchLogService.Append("Drew", { UserId = userId, Count = #drawn })
+
+	-- Over the cap, the player owes a discard before anything else happens.
+	-- The turn genuinely stops here: no roll, no spell, until the hand is legal.
+	if DeckService.IsHandOverFull(userId) then
+		advanceThrough({ Phase.HandOverflowDiscard }, "hand over the cap")
+		pushStateToAll()
+		return
+	end
+
+	-- SpellChoice is traversed rather than skipped: casting arrives in
+	-- Milestone 6, but the phase is real, logged, and already in place.
+	advanceThrough({ Phase.SpellChoice, Phase.RollReady }, "no spell casting yet")
+	pushStateToAll()
+end
+
+-- Resumes the turn once an over-full hand has been brought back to the cap.
+local function continueAfterDiscard()
+	advanceThrough({ Phase.SpellChoice, Phase.RollReady }, "hand is legal again")
 	pushStateToAll()
 end
 
@@ -312,11 +339,41 @@ intentHandlers[Intent.ChooseJunction] = function(player, payload)
 	return { Ok = true, Message = "Route chosen" }
 end
 
-intentHandlers[Intent.ChooseSummon] = function(player, payload)
-	local cardId = payload and payload.CardId
-	if typeof(cardId) ~= "number" then
-		return { Ok = false, Code = Enums.RejectReason.InvalidCard, Message = "no card id" }
+intentHandlers[Intent.DiscardToHandLimit] = function(player, payload)
+	local instanceId = payload and payload.InstanceId
+	if typeof(instanceId) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidCard, Message = "no card chosen" }
 	end
+
+	local discarded = DeckService.DiscardInstance(player.UserId, instanceId)
+	if not discarded.Ok then
+		return { Ok = false, Code = discarded.Code, Message = discarded.Message }
+	end
+
+	-- Still over the cap after one discard: stay in this phase and ask again
+	-- rather than letting the turn continue with an illegal hand.
+	if DeckService.IsHandOverFull(player.UserId) then
+		return { Ok = true, Message = "Discarded — still over the limit" }
+	end
+
+	task.spawn(continueAfterDiscard)
+	return { Ok = true, Message = "Discarded" }
+end
+
+intentHandlers[Intent.ChooseSummon] = function(player, payload)
+	-- Cards are named by INSTANCE now, not by card id. Naming a type you do
+	-- not hold is refused by DeckService, which is what stops the old
+	-- behaviour where any card could be played any number of times.
+	local instanceId = payload and payload.InstanceId
+	if typeof(instanceId) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidCard, Message = "no card chosen" }
+	end
+
+	local instance = DeckService.GetInstance(player.UserId, instanceId)
+	if instance == nil then
+		return { Ok = false, Code = Enums.RejectReason.CardNotInHand, Message = "that card is not in your hand" }
+	end
+	local cardId = instance.CardId
 
 	local tileId = MovementService.GetCurrentTile(player)
 	local tile = BoardService.GetTile(tileId)
@@ -326,8 +383,13 @@ intentHandlers[Intent.ChooseSummon] = function(player, payload)
 	if isInvasion then
 		ok, reason = BattleService.ChallengeTile(player, cardId, tileId)
 		if reason ~= nil then
+			-- Rejected outright, so the card was never played and stays in hand.
 			return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = reason }
 		end
+
+		-- The challenge resolved, so the card is spent either way.
+		DeckService.PlayInstance(player.UserId, instanceId)
+
 		-- A lost challenge is a successful action with an unfavourable
 		-- outcome; the visitor then owes the toll.
 		if not ok then
@@ -341,6 +403,11 @@ intentHandlers[Intent.ChooseSummon] = function(player, payload)
 	if not ok then
 		return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = tostring(reason) }
 	end
+
+	-- Consumed only after the summon succeeded, so a refused summon never
+	-- costs the card.
+	DeckService.PlayInstance(player.UserId, instanceId)
+
 	task.spawn(endTurnAndAdvance)
 	return { Ok = true, Message = "Claimed tile #" .. tileId }
 end
@@ -437,6 +504,11 @@ local function onPlayerAdded(player)
 	MatchOrchestrator.AddParticipant(player.UserId)
 	BoardVisualService.CreateCepterToken(player)
 
+	-- A shuffled book and an opening hand one below the cap, so the first
+	-- start-of-turn draw fills the hand exactly instead of overflowing it.
+	DeckService.RegisterPlayer(player.UserId)
+	DeckService.Draw(player.UserId, RulesConfig.Hand.OpeningSize)
+
 	-- The first player to arrive starts the match. A real lobby with an
 	-- explicit start step is Milestone 8; until then the match begins as
 	-- soon as someone is here to play it.
@@ -452,6 +524,7 @@ local function onPlayerRemoving(player)
 	local wasActive = MatchOrchestrator.IsActivePlayer(player.UserId)
 
 	MovementService.RemoveCepter(player)
+	DeckService.RemovePlayer(player.UserId)
 	EconomyService.RemovePlayer(player)
 	BoardVisualService.RemoveCepterToken(player)
 	MatchOrchestrator.RemoveParticipant(player.UserId)

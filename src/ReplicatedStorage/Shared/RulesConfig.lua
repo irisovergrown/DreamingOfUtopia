@@ -104,6 +104,11 @@ RulesConfig.Book = {
 
 RulesConfig.Hand = {
 	MaxSize = 6,
+	-- One below the cap, so the ordinary start-of-turn draw fills the hand
+	-- exactly rather than immediately overflowing it. Overflow then only
+	-- happens through effects that draw extra, which is when the discard
+	-- decision is actually interesting.
+	OpeningSize = 5,
 }
 
 RulesConfig.Battle = {
