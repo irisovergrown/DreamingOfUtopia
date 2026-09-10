@@ -62,8 +62,9 @@ local function stubSources(overrides)
 			GetToll = function() return 60 end,
 		},
 		Movement = {
-			GetCurrentTileByUserId = function(userId) return userId == ALICE and 2 or 3 end,
-			GetLapCountByUserId = function() return 1 end,
+			GetCurrentTile = function(userId) return userId == ALICE and 2 or 3 end,
+			GetCurrentNodeId = function(userId) return userId == ALICE and "T2" or "T3" end,
+			GetLapCount = function() return 1 end,
 		},
 		Battle = { GetDefender = function() return nil end },
 		Card = { GetCard = function() return nil end },

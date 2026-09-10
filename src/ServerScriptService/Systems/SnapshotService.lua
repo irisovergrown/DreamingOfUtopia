@@ -70,8 +70,10 @@ local function buildStandings()
 			UserId = userId,
 			CurrentMagic = economy and economy.GetBalance(userId) or 0,
 			TerritoriesOwned = ownedCount,
-			TileId = movement and movement.GetCurrentTileByUserId and movement.GetCurrentTileByUserId(userId) or nil,
-			LapCount = movement and movement.GetLapCountByUserId and movement.GetLapCountByUserId(userId) or 0,
+			-- Both accept a bare userId; standings are built from participant
+			-- ids and there is no Player instance to hand.
+			TileId = movement and movement.GetCurrentTile and movement.GetCurrentTile(userId) or nil,
+			LapCount = movement and movement.GetLapCount and movement.GetLapCount(userId) or 0,
 			IsActive = orchestrator and orchestrator.IsActivePlayer(userId) or false,
 			-- Count, never contents. This is the line hands must not cross.
 			HandCount = _sources.GetHandCount and _sources.GetHandCount(userId) or 0,
@@ -145,13 +147,32 @@ function SnapshotService.Build(userId)
 		UserId = userId,
 		CurrentMagic = economy and economy.GetBalance(userId) or 0,
 		IsYourTurn = orchestrator and orchestrator.IsActivePlayer(userId) or false,
-		TileId = movement and movement.GetCurrentTileByUserId and movement.GetCurrentTileByUserId(userId) or nil,
+		TileId = movement and movement.GetCurrentTile and movement.GetCurrentTile(userId) or nil,
+		NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
 		-- Populated in Milestone 3. Present now so the shape, and the
 		-- guarantee that it is per-recipient, exist before there is anything
 		-- secret to put in it.
 		Hand = {},
 		LegalIntents = {},
 	}
+
+	-- The routes on offer when movement has paused at a branch. Only ever the
+	-- recipient's own pending choice: another player's junction is not
+	-- actionable by this client and does not belong in their snapshot.
+	if movement and movement.GetPendingChoice then
+		local pending = movement.GetPendingChoice(userId)
+		if pending ~= nil then
+			local options = {}
+			for _, exit in ipairs(pending.Options) do
+				table.insert(options, { EdgeId = exit.EdgeId, To = exit.To })
+			end
+			snapshot.You.PendingRoute = {
+				NodeId = pending.NodeId,
+				RemainingSteps = pending.RemainingSteps,
+				Options = options,
+			}
+		end
+	end
 
 	if orchestrator and validator then
 		snapshot.You.LegalIntents = validator.getLegalIntentsForPlayer({

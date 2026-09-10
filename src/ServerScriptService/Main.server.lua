@@ -54,7 +54,10 @@ local MatchOrchestrator = require(Systems.MatchOrchestrator)
 local ActionValidator = require(Systems.ActionValidator)
 local SnapshotService = require(Systems.SnapshotService)
 local BoardService = require(Systems.BoardService)
+local BoardGraphService = require(Systems.BoardGraphService)
 local BoardVisualService = require(Systems.BoardVisualService)
+local LapService = require(Systems.LapService)
+local RandomService = require(Systems.RandomService)
 local MovementService = require(Systems.MovementService)
 local CardService = require(Systems.CardService)
 local EconomyService = require(Systems.EconomyService)
@@ -71,8 +74,31 @@ local Intent = Enums.Intent
 -- dependency is stated next to each call.
 MatchLogService.Init()
 MatchOrchestrator.Init({ Log = MatchLogService })
-BoardService.Init() -- reads the tagged Parts; everything below reads tiles
-EconomyService.Init() -- subscribes to MovementService.LapCompleted
+
+-- The board the match is played on. CurrentLoop describes the 16 hand-placed
+-- tiles as graph data, so movement runs through the Milestone 2 resolver on
+-- the board that already exists. Swapping this line for TestBoard01 loads the
+-- proving board with junctions, forts and warps instead.
+local ACTIVE_BOARD = require(ReplicatedStorage.Shared.BoardDefinitions.CurrentLoop)
+local boardLoaded = BoardGraphService.Load(ACTIVE_BOARD)
+if not boardLoaded.Ok then
+	-- A malformed board cannot be played, and pretending otherwise strands a
+	-- match mid-move. Fail loudly at boot instead.
+	error(string.format(
+		"[DreamingOfUtopia] board '%s' failed validation: %s",
+		tostring(ACTIVE_BOARD.BoardId),
+		table.concat(boardLoaded.Details.Errors, "; ")
+	))
+end
+
+BoardService.Init() -- tile ownership/level state, keyed by the tagged Parts
+LapService.Init({ Graph = BoardGraphService })
+MovementService.Init({
+	Graph = BoardGraphService,
+	Lap = LapService,
+	Random = RandomService.default(),
+})
+EconomyService.Init() -- subscribes to LapService.LapCompleted
 BattleService.Init()
 
 BoardVisualService.Init({
@@ -80,6 +106,7 @@ BoardVisualService.Init({
 	Battle = BattleService,
 	Card = CardService,
 	Movement = MovementService,
+	Graph = BoardGraphService,
 })
 
 SnapshotService.Init({
@@ -207,12 +234,33 @@ local function landingActionsFor(userId, tileId)
 	return { Intent.PayToll, Intent.ChooseSummon }
 end
 
-local function resolveMovementAndLanding(player, steps)
-	if not advanceThrough({ Phase.DiceResolution, Phase.Movement }, "rolled " .. steps) then
+-- Movement can stop halfway and ask which way to go, so this handles both
+-- outcomes: a finished move falls through to landing, an unfinished one parks
+-- the match in JunctionChoice until the player picks a route.
+local function settleMovement(player, movementResult)
+	if not movementResult.Ok then
+		warn("[DreamingOfUtopia] movement failed: " .. tostring(movementResult.Message))
+		endTurnAndAdvance()
 		return
 	end
 
-	MovementService.MoveCepter(player, steps)
+	if movementResult.Payload.Status == "AwaitingChoice" then
+		MatchOrchestrator.TransitionTo(Phase.JunctionChoice, "branch reached")
+		MatchLogService.Append("JunctionReached", {
+			UserId = player.UserId,
+			NodeId = movementResult.Payload.NodeId,
+			Options = #movementResult.Payload.Options,
+			RemainingSteps = movementResult.Payload.RemainingSteps,
+		})
+		pushStateToAll()
+		return
+	end
+
+	-- Movement is finished. Return to Movement first when resuming from a
+	-- junction, because LandingResolution is only reachable from there.
+	if MatchOrchestrator.GetPhase() == Phase.JunctionChoice then
+		MatchOrchestrator.TransitionTo(Phase.Movement, "route chosen")
+	end
 
 	if not advanceThrough({ Phase.LandingResolution }, "movement finished") then
 		return
@@ -228,6 +276,13 @@ local function resolveMovementAndLanding(player, steps)
 	pushStateToAll()
 end
 
+local function resolveMovementAndLanding(player, steps)
+	if not advanceThrough({ Phase.DiceResolution, Phase.Movement }, "rolled " .. steps) then
+		return
+	end
+	settleMovement(player, MovementService.BeginMove(player.UserId, steps, Enums.MovementCause.Roll))
+end
+
 -- === Intent handling ========================================================
 
 local intentHandlers = {}
@@ -239,6 +294,22 @@ intentHandlers[Intent.Roll] = function(player)
 	-- DiceResolution or Movement waiting on anything.
 	task.spawn(resolveMovementAndLanding, player, total)
 	return { Ok = true, Message = string.format("Rolled %d", total) }
+end
+
+intentHandlers[Intent.ChooseJunction] = function(player, payload)
+	local edgeId = payload and payload.EdgeId
+	if typeof(edgeId) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidTarget, Message = "no route chosen" }
+	end
+
+	local result = MovementService.ChooseExit(player.UserId, edgeId)
+	if not result.Ok then
+		-- The move is still pending, so the player simply chooses again.
+		return { Ok = false, Code = result.Code, Message = result.Message }
+	end
+
+	task.spawn(settleMovement, player, result)
+	return { Ok = true, Message = "Route chosen" }
 end
 
 intentHandlers[Intent.ChooseSummon] = function(player, payload)
@@ -393,13 +464,20 @@ local function onPlayerRemoving(player)
 	end
 end
 
-MovementService.CepterLanded:Connect(function(player, tileId)
-	MatchLogService.Append("CepterLanded", { UserId = player.UserId, TileId = tileId })
+-- Both signals report userIds and node ids since Milestone 2: movement speaks
+-- in graph nodes, and lap completion belongs to LapService rather than to
+-- movement, because a lap is "every required fort, then the castle".
+MovementService.CepterLanded:Connect(function(userId, nodeId)
+	MatchLogService.Append("CepterLanded", { UserId = userId, NodeId = nodeId })
 end, 0, "Main.CepterLanded")
 
-MovementService.LapCompleted:Connect(function(player, lapCount)
-	MatchLogService.Append("LapCompleted", { UserId = player.UserId, Lap = lapCount })
+LapService.LapCompleted:Connect(function(userId, lapNumber)
+	MatchLogService.Append("LapCompleted", { UserId = userId, Lap = lapNumber })
 end, 0, "Main.LapCompleted")
+
+LapService.FortVisited:Connect(function(userId, fortType)
+	MatchLogService.Append("FortVisited", { UserId = userId, FortType = fortType })
+end, 0, "Main.FortVisited")
 
 EconomyService.BalanceChanged:Connect(function(userId)
 	local player = Players:GetPlayerByUserId(userId)

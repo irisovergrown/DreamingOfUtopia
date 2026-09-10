@@ -44,6 +44,10 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Signal = require(ReplicatedStorage.Shared.Signal)
 local BoardService = require(ServerScriptService.Systems.BoardService)
 local MovementService = require(ServerScriptService.Systems.MovementService)
+-- Lap completion moved out of MovementService in Milestone 2: a lap is "every
+-- required fort, then the castle", which is lap bookkeeping rather than
+-- anything movement knows about.
+local LapService = require(ServerScriptService.Systems.LapService)
 
 local EconomyService = {}
 
@@ -110,15 +114,15 @@ end
 function EconomyService.Init()
 	_balances = {}
 
-	MovementService.LapCompleted:Connect(function(player, _lapCount)
-		local bonus = EconomyService.ComputeLapBonus(player)
-		EconomyService.AddMagic(player, bonus)
+	LapService.LapCompleted:Connect(function(userId, _lapNumber)
+		local bonus = EconomyService.ComputeLapBonus(userId)
+		EconomyService.AddMagic(userId, bonus)
 
-		local balance = EconomyService.GetBalance(player)
+		local balance = EconomyService.GetBalance(userId)
 		if balance ~= nil and balance >= WIN_TARGET_MAGIC then
-			EconomyService.WinTargetReached:Fire(getUserId(player), balance)
+			EconomyService.WinTargetReached:Fire(userId, balance)
 		end
-	end)
+	end, 0, "Economy.LapBonus")
 end
 
 function EconomyService.RegisterPlayer(player)

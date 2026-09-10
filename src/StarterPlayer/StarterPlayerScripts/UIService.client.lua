@@ -131,7 +131,23 @@ buttonRowLayout.FillDirection = Enum.FillDirection.Horizontal
 buttonRowLayout.Padding = UDim.new(0, 6)
 buttonRowLayout.Parent = buttonRow
 
-local resultLabel = createLabel("ResultLabel", 9, 54, 14)
+-- Route buttons, built on demand when movement pauses at a branch. There is
+-- no fixed set of them: how many routes a junction offers is a property of
+-- the board, so the row is rebuilt from each snapshot rather than declared.
+local routeRow = Instance.new("Frame")
+routeRow.Name = "RouteRow"
+routeRow.LayoutOrder = 9
+routeRow.Size = UDim2.new(1, 0, 0, 28)
+routeRow.BackgroundTransparency = 1
+routeRow.Visible = false
+routeRow.Parent = frame
+
+local routeRowLayout = Instance.new("UIListLayout")
+routeRowLayout.FillDirection = Enum.FillDirection.Horizontal
+routeRowLayout.Padding = UDim.new(0, 6)
+routeRowLayout.Parent = routeRow
+
+local resultLabel = createLabel("ResultLabel", 10, 54, 14)
 
 -- === Intent dispatch ========================================================
 
@@ -273,9 +289,41 @@ local function formatStandings(snapshot)
 	return table.concat(lines, "\n")
 end
 
+local function renderRouteChoice(pending)
+	for _, child in ipairs(routeRow:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	if pending == nil then
+		routeRow.Visible = false
+		return
+	end
+
+	routeRow.Visible = true
+	for order, option in ipairs(pending.Options) do
+		local button = Instance.new("TextButton")
+		button.Name = "Route_" .. option.EdgeId
+		button.LayoutOrder = order
+		button.Size = UDim2.fromOffset(104, 28)
+		button.BackgroundColor3 = BUTTON_COLOR
+		button.TextColor3 = TEXT_COLOR
+		button.Font = FONT
+		button.TextSize = 13
+		button.Text = "→ " .. option.To
+		button.Parent = routeRow
+
+		button.Activated:Connect(function()
+			submit(Intent.ChooseJunction, { EdgeId = option.EdgeId })
+		end)
+	end
+end
+
 Remotes.StateUpdated.OnClientEvent:Connect(function(snapshot)
 	currentPhase = snapshot.Phase
 	legalIntents = snapshot.You.LegalIntents or {}
+	renderRouteChoice(snapshot.You.PendingRoute)
 
 	if snapshot.MatchComplete then
 		phaseLabel.Text = "Match over"

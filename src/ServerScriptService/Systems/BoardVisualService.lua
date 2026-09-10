@@ -45,6 +45,7 @@
 ]]
 
 local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -59,7 +60,7 @@ local PLAYER_TEMPLATE_NAME = "PlayerTemplate"
 -- whatever proportions the authored PlayerTemplate actually has.
 local CEPTER_ROOT_HEIGHT = 3
 
-local _board, _battle, _card, _movement
+local _board, _battle, _card, _movement, _graph
 local _cepterFolder, _defenderFolder
 local _modelsFolder, _playerModels, _summonModels
 
@@ -271,6 +272,7 @@ function BoardVisualService.Init(services)
 	_battle = services.Battle
 	_card = services.Card
 	_movement = services.Movement
+	_graph = services.Graph
 
 	_tileParts = {}
 	_tileLabels = {}
@@ -330,9 +332,22 @@ function BoardVisualService.Init(services)
 		refreshTileLabel(tileId)
 	end, 0, "BoardVisual.DefenderBuffed")
 
-	_movement.CepterMoved:Connect(function(player, _from, toTileId)
-		moveCepterToken(player, toTileId)
-	end, 0, "BoardVisual.CepterMoved")
+	-- Movement is graph-based since Milestone 2 and reports node ids, so the
+	-- token follows NodeEntered and translates back to the Part that draws
+	-- that node. Movement no longer sleeps between steps either, so this fires
+	-- for every node of a move in one frame; the client animates from the
+	-- path in the movement result rather than from these.
+	_movement.NodeEntered:Connect(function(userId, nodeId)
+		local player = Players:GetPlayerByUserId(userId)
+		if player == nil then
+			return
+		end
+		local node = _graph and _graph.GetNode(nodeId)
+		local tileId = node and (node.StudioNodeId or node.StudioTileId)
+		if tileId ~= nil then
+			moveCepterToken(player, tileId)
+		end
+	end, 0, "BoardVisual.NodeEntered")
 
 	BoardVisualService.RefreshAllTiles()
 end
