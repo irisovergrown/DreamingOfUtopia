@@ -134,14 +134,23 @@ end
 focusOn(Vector3.new(0, 0, 0), true)
 
 Remotes.StateUpdated.OnClientEvent:Connect(function(state)
-	local turnUserId = state.CurrentTurnUserId
+	-- Milestone 1 reshaped the snapshot and this field became ActivePlayerId.
+	-- Reading the old name left it permanently nil, so the handler returned on
+	-- every push and the camera sat on its startup framing at the origin,
+	-- which reads as "stuck in the middle of the map".
+	local turnUserId = state.ActivePlayerId
 	if turnUserId == nil or turnUserId == lastTurnUserId then
 		return
 	end
-	lastTurnUserId = turnUserId
 
+	-- The folder is created by the server at boot, but a client can receive a
+	-- snapshot before that instance has replicated, so re-acquire rather than
+	-- giving up permanently on a nil captured at script start.
 	if cepterFolder == nil then
-		return
+		cepterFolder = Workspace:FindFirstChild("Cepters")
+		if cepterFolder == nil then
+			return
+		end
 	end
 
 	local token = cepterFolder:WaitForChild("Cepter_" .. turnUserId, 5)
@@ -156,7 +165,13 @@ Remotes.StateUpdated.OnClientEvent:Connect(function(state)
 		return
 	end
 
-	print("[DreamingOfUtopia] CameraService focusing on Cepter_" .. turnUserId)
+	-- Latched only after a successful focus. Setting it up front meant that if
+	-- the token had not replicated yet, this player was recorded as "already
+	-- focused" and the camera would never try them again for the rest of the
+	-- match — the next snapshot would see turnUserId == lastTurnUserId and
+	-- return immediately.
+	lastTurnUserId = turnUserId
+
 	trackToken(rootPart)
 	focusOn(rootPart.Position, false)
 end)
