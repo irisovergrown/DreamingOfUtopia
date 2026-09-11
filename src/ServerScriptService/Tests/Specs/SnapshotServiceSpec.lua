@@ -44,25 +44,35 @@ local function stubSources(overrides)
 		Economy = {
 			GetBalance = function(userId) return userId == ALICE and 500 or 320 end,
 		},
-		Board = {
-			GetAllTiles = function()
-				return {
-					{ Id = 1, TileType = "Start", Level = 1 },
-					{ Id = 2, TileType = "Property", Era = "Earth", Level = 2, Owner = ALICE },
-					{ Id = 3, TileType = "Property", Era = "Fire", Level = 1, Owner = BOB },
+		-- Territories are keyed by node id since Milestone 5. Alice holds T2,
+		-- Bob holds T3.
+		Territory = {
+			GetTerritory = function(nodeId)
+				local territories = {
+					T2 = { NodeId = "T2", Element = "Earth", BaseValue = 100, AreaId = "Main", Level = 2, Owner = ALICE },
+					T3 = { NodeId = "T3", Element = "Fire", BaseValue = 100, AreaId = "Main", Level = 1, Owner = BOB },
 				}
+				return territories[nodeId]
 			end,
-			GetTile = function(tileId)
-				local tiles = {
-					[2] = { Id = 2, TileType = "Property", Era = "Earth", Level = 2, Owner = ALICE },
-					[3] = { Id = 3, TileType = "Property", Era = "Fire", Level = 1, Owner = BOB },
-				}
-				return tiles[tileId]
+			GetOwnedBy = function(userId)
+				return userId == ALICE and { "T2" } or { "T3" }
 			end,
+			GetLandValue = function() return 200 end,
 			GetToll = function() return 60 end,
 		},
+		Valuation = {
+			GetTotalMagic = function(userId) return userId == ALICE and 700 or 520 end,
+			GetLandValue = function() return 200 end,
+		},
+		Victory = {
+			IsGoalReachedState = function() return false end,
+		},
+		Graph = {
+			GetNode = function(nodeId)
+				return { Id = nodeId, Type = "Territory" }
+			end,
+		},
 		Movement = {
-			GetCurrentTile = function(userId) return userId == ALICE and 2 or 3 end,
 			GetCurrentNodeId = function(userId) return userId == ALICE and "T2" or "T3" end,
 			GetLapCount = function() return 1 end,
 		},
@@ -110,9 +120,11 @@ return {
 			local snapshot = SnapshotService.Build(ALICE)
 
 			t:Equal(#snapshot.Standings, 2)
+			-- Standings are ordered by Total Magic now, so Alice leads on 700.
 			local alice = snapshot.Standings[1]
 			t:Equal(alice.UserId, ALICE)
-			t:Equal(alice.CurrentMagic, 500)
+			t:Equal(alice.CurrentMagic, 500, "what she can spend")
+			t:Equal(alice.TotalMagic, 700, "what she is worth")
 			t:Equal(alice.TerritoriesOwned, 1)
 			t:True(alice.IsActive)
 			t:False(snapshot.Standings[2].IsActive)
@@ -241,11 +253,11 @@ return {
 		{ "the current tile view reflects the recipient's own position", function(t)
 			SnapshotService.Init(stubSources())
 
-			t:Equal(SnapshotService.Build(ALICE).CurrentTile.TileId, 2)
-			t:Equal(SnapshotService.Build(BOB).CurrentTile.TileId, 3)
+			t:Equal(SnapshotService.Build(ALICE).CurrentTile.NodeId, "T2")
+			t:Equal(SnapshotService.Build(BOB).CurrentTile.NodeId, "T3")
 		end },
 
-		{ "tile views carry element, level, owner and toll", function(t)
+		{ "territory views carry element, level, owner and toll", function(t)
 			SnapshotService.Init(stubSources())
 			local tile = SnapshotService.Build(ALICE).CurrentTile
 

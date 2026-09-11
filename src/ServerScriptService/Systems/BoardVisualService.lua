@@ -49,7 +49,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
-local ElementData = require(ReplicatedStorage.Shared.EraData)
+local ElementData = require(ReplicatedStorage.Shared.ElementData)
 
 local BoardVisualService = {}
 
@@ -60,7 +60,7 @@ local PLAYER_TEMPLATE_NAME = "PlayerTemplate"
 -- whatever proportions the authored PlayerTemplate actually has.
 local CEPTER_ROOT_HEIGHT = 3
 
-local _board, _battle, _card, _movement, _graph
+local _territory, _battle, _card, _movement, _graph
 local _cepterFolder, _defenderFolder
 local _modelsFolder, _playerModels, _summonModels
 
@@ -80,7 +80,7 @@ local function ensureFolder(name)
 	return folder
 end
 
-local function attachTileLabel(tileId, part)
+local function attachTileLabel(nodeId, part)
 	local existing = part:FindFirstChild("TileLabel")
 	if existing then
 		existing:Destroy()
@@ -103,13 +103,13 @@ local function attachTileLabel(tileId, part)
 	label.TextStrokeTransparency = 0.3
 	label.Parent = billboard
 
-	_tileLabels[tileId] = label
+	_tileLabels[nodeId] = label
 end
 
 -- A point `radius` studs above the tile's own top surface, so this works
 -- regardless of a hand-placed tile's size or elevation.
-local function tileWorldPosition(tileId, radius)
-	local part = _tileParts[tileId]
+local function nodeWorldPosition(nodeId, radius)
+	local part = _tileParts[nodeId]
 	if part == nil then
 		return Vector3.new(0, radius, 0)
 	end
@@ -152,23 +152,30 @@ local function instanceHeight(instance)
 	return size.Y
 end
 
-local function refreshTileLabel(tileId)
-	local tile = _board.GetTile(tileId)
-	local label = _tileLabels[tileId]
-	if tile == nil or label == nil then
+-- Everything here is keyed by NODE ID since Milestone 5, the same key the
+-- graph and TerritoryService use. The Part that draws a node is found through
+-- its StudioNodeId, so the numeric attribute is a rendering detail rather than
+-- a second identity for a place on the board.
+local function refreshTileLabel(nodeId)
+	local label = _tileLabels[nodeId]
+	if label == nil then
 		return
 	end
 
-	if tile.TileType == "Start" then
-		label.Text = string.format("#%d — Castle", tile.Id)
+	-- Castles, forts and warps are not territories, so they have no ownership
+	-- or level to show — just what they are.
+	local territory = _territory.GetTerritory(nodeId)
+	if territory == nil then
+		local node = _graph and _graph.GetNode(nodeId)
+		label.Text = string.format("%s — %s", nodeId, node and node.Type or "?")
 		return
 	end
 
-	local element = ElementData.GetEra(tile.Era)
-	local ownerText = tile.Owner and ("Owner " .. tostring(tile.Owner)) or "Unclaimed"
+	local element = ElementData.GetElement(territory.Element)
+	local ownerText = territory.Owner and ("Owner " .. tostring(territory.Owner)) or "Unclaimed"
 
 	local defenderText = ""
-	local defender = _battle.GetDefender(tileId)
+	local defender = _battle.GetDefender(nodeId)
 	if defender ~= nil then
 		local card = _card.GetCard(defender.CardId)
 		if card ~= nil then
@@ -177,23 +184,27 @@ local function refreshTileLabel(tileId)
 	end
 
 	label.Text = string.format(
-		"#%d — %s — Lv%d — %s%s",
-		tile.Id, element.DisplayName, tile.Level, ownerText, defenderText
+		"%s — %s — Lv%d — %s%s",
+		nodeId,
+		element and element.DisplayName or "Neutral",
+		territory.Level,
+		ownerText,
+		defenderText
 	)
 end
 
-local function updateDefenderMarker(tileId, newOwnerUserId)
-	local existing = _defenderMarkers[tileId]
+local function updateDefenderMarker(nodeId, newOwnerUserId)
+	local existing = _defenderMarkers[nodeId]
 	if existing ~= nil then
 		existing:Destroy()
-		_defenderMarkers[tileId] = nil
+		_defenderMarkers[nodeId] = nil
 	end
 
 	if newOwnerUserId == nil then
 		return
 	end
 
-	local defender = _battle.GetDefender(tileId)
+	local defender = _battle.GetDefender(nodeId)
 	local card = defender and _card.GetCard(defender.CardId)
 	if card == nil then
 		return
@@ -209,17 +220,17 @@ local function updateDefenderMarker(tileId, newOwnerUserId)
 	end
 
 	local marker = template:Clone()
-	marker.Name = "Defender_" .. tileId
+	marker.Name = "Defender_" .. nodeId
 	anchorAll(marker)
 	marker.Parent = _defenderFolder
-	marker:PivotTo(CFrame.new(tileWorldPosition(tileId, instanceHeight(marker) / 2)))
+	marker:PivotTo(CFrame.new(nodeWorldPosition(nodeId, instanceHeight(marker) / 2)))
 
-	_defenderMarkers[tileId] = marker
+	_defenderMarkers[nodeId] = marker
 end
 
 function BoardVisualService.RefreshAllTiles()
-	for tileId in pairs(_tileParts) do
-		refreshTileLabel(tileId)
+	for nodeId in pairs(_tileParts) do
+		refreshTileLabel(nodeId)
 	end
 end
 
@@ -247,7 +258,7 @@ function BoardVisualService.CreateCepterToken(player)
 	model.PrimaryPart = root
 	anchorAll(model)
 	model.Parent = _cepterFolder
-	model:PivotTo(CFrame.new(tileWorldPosition(_movement.GetCurrentTile(player), CEPTER_ROOT_HEIGHT)))
+	model:PivotTo(CFrame.new(nodeWorldPosition(_movement.GetCurrentNodeId(player), CEPTER_ROOT_HEIGHT)))
 
 	_cepterTokens[player.UserId] = model
 end
@@ -260,15 +271,15 @@ function BoardVisualService.RemoveCepterToken(player)
 	end
 end
 
-local function moveCepterToken(player, tileId)
+local function moveCepterToken(player, nodeId)
 	local model = _cepterTokens[player.UserId]
 	if model ~= nil then
-		model:PivotTo(CFrame.new(tileWorldPosition(tileId, CEPTER_ROOT_HEIGHT)))
+		model:PivotTo(CFrame.new(nodeWorldPosition(nodeId, CEPTER_ROOT_HEIGHT)))
 	end
 end
 
 function BoardVisualService.Init(services)
-	_board = services.Board
+	_territory = services.Territory
 	_battle = services.Battle
 	_card = services.Card
 	_movement = services.Movement
@@ -292,44 +303,52 @@ function BoardVisualService.Init(services)
 		warn("[DreamingOfUtopia] BoardVisualService: ReplicatedStorage.Models not found — Cepter and creature visuals will be skipped")
 	end
 
-	-- Its own scan of the same tag BoardService reads. Deliberately separate:
-	-- BoardService stays instance-agnostic (pure data), and which Part draws
-	-- a tile is a visual concern that belongs here.
+	-- Parts are found by tag and then resolved to graph nodes through their
+	-- StudioNodeId. A tagged Part whose id is not in the loaded board is
+	-- skipped with a warning rather than silently ignored — it almost always
+	-- means the board definition and the Studio geometry have drifted.
 	local tagged = CollectionService:GetTagged(TILE_TAG)
 	if #tagged == 0 then
 		warn("[DreamingOfUtopia] BoardVisualService: no Parts tagged '" .. TILE_TAG .. "' in Workspace")
 	end
 	for _, part in ipairs(tagged) do
-		local tileId = part:GetAttribute("Id")
-		if tileId ~= nil then
-			_tileParts[tileId] = part
-			attachTileLabel(tileId, part)
+		local studioNodeId = part:GetAttribute("Id")
+		local nodeId = studioNodeId ~= nil and _graph and _graph.GetNodeIdByStudioNodeId(studioNodeId) or nil
+		if nodeId ~= nil then
+			_tileParts[nodeId] = part
+			attachTileLabel(nodeId, part)
+		elseif studioNodeId ~= nil then
+			warn(string.format(
+				"[DreamingOfUtopia] BoardVisualService: Part with Id=%s has no node in board '%s'",
+				tostring(studioNodeId), tostring(_graph and _graph.GetBoardId())
+			))
 		end
 	end
 
-	_board.TileOwnerChanged:Connect(function(tileId, newOwnerUserId)
-		local part = _tileParts[tileId]
+	_territory.OwnerChanged:Connect(function(nodeId, newOwnerUserId)
+		local part = _tileParts[nodeId]
 		if part ~= nil then
 			part.Material = newOwnerUserId and Enum.Material.Neon or Enum.Material.SmoothPlastic
 		end
-		refreshTileLabel(tileId)
-		updateDefenderMarker(tileId, newOwnerUserId)
-	end, 0, "BoardVisual.TileOwnerChanged")
+		refreshTileLabel(nodeId)
+		updateDefenderMarker(nodeId, newOwnerUserId)
+	end, 0, "BoardVisual.OwnerChanged")
 
-	_board.TileLeveledUp:Connect(function(tileId)
-		refreshTileLabel(tileId)
-	end, 0, "BoardVisual.TileLeveledUp")
+	_territory.LevelChanged:Connect(function(nodeId)
+		refreshTileLabel(nodeId)
+	end, 0, "BoardVisual.LevelChanged")
 
-	_board.EraChanged:Connect(function(tileId, newEra)
-		local part = _tileParts[tileId]
+	_territory.ElementChanged:Connect(function(nodeId, newElement)
+		local part = _tileParts[nodeId]
 		if part ~= nil then
-			part.Color = ElementData.GetEra(newEra).Color
+			local element = ElementData.GetElement(newElement)
+			part.Color = element and element.Color or ElementData.Neutral.Color
 		end
-		refreshTileLabel(tileId)
+		refreshTileLabel(nodeId)
 	end, 0, "BoardVisual.ElementChanged")
 
-	_battle.DefenderBuffed:Connect(function(tileId)
-		refreshTileLabel(tileId)
+	_battle.DefenderBuffed:Connect(function(nodeId)
+		refreshTileLabel(nodeId)
 	end, 0, "BoardVisual.DefenderBuffed")
 
 	-- Movement is graph-based since Milestone 2 and reports node ids, so the
@@ -339,13 +358,8 @@ function BoardVisualService.Init(services)
 	-- path in the movement result rather than from these.
 	_movement.NodeEntered:Connect(function(userId, nodeId)
 		local player = Players:GetPlayerByUserId(userId)
-		if player == nil then
-			return
-		end
-		local node = _graph and _graph.GetNode(nodeId)
-		local tileId = node and (node.StudioNodeId or node.StudioTileId)
-		if tileId ~= nil then
-			moveCepterToken(player, tileId)
+		if player ~= nil then
+			moveCepterToken(player, nodeId)
 		end
 	end, 0, "BoardVisual.NodeEntered")
 

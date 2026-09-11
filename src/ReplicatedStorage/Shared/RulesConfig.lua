@@ -115,6 +115,14 @@ RulesConfig.Battle = {
 	CriticalMultiplier = 1.5,
 }
 
+RulesConfig.Liquidation = {
+	-- What a territory fetches when sold to cover a debt, as a fraction of its
+	-- current land value. Below 1.0 on purpose: a forced sale should hurt, or
+	-- liquidating becomes a free way to cash out a chain. UNVERIFIED against
+	-- the source game's conversion rate.
+	SaleRate = 0.5,
+}
+
 RulesConfig.Lap = {
 	-- UNVERIFIED: fraction of MHP restored to a player's creatures on lap
 	-- completion. Flagged in the source research as version-sensitive.

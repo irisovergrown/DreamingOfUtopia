@@ -2,10 +2,12 @@
 	ModuleScript — shared, part of the modular system architecture.
 
 	Studio placement:
-		ReplicatedStorage > Shared > EraData (ModuleScript)
+		ReplicatedStorage > Shared > ElementData (ModuleScript)
 
 	Purpose:
-		Single source of truth for the classic four-element system — Fire,
+		Single source of truth for the classic four-element system (renamed from
+		EraData in Milestone 5 — an era is the flavour skin, the element is the
+		mechanic, and the module holds elements) — Fire,
 		Air, Earth, and Water. This is the mechanical unit: board tiles,
 		creature cards, and chain bonuses all key off these four element
 		ids. Each element is skinned in one retrofuturism era for visual/
@@ -14,15 +16,15 @@
 		decision, not open-ended.
 
 	Usage:
-		local EraData = require(game:GetService("ReplicatedStorage").Shared.EraData)
-		local element = EraData.Eras["Fire"]
+		local ElementData = require(game:GetService("ReplicatedStorage").Shared.ElementData)
+		local element = ElementData.Elements["Fire"]
 		print(element.DisplayName, element.EraName, element.Color)
 ]]
 
-local EraData = {}
+local ElementData = {}
 
 -- Placeholder colors for greybox/visualization purposes only — not final art direction.
-EraData.Eras = {
+ElementData.Elements = {
 	Fire = {
 		DisplayName = "Fire",
 		EraName = "Laser Grid",
@@ -50,17 +52,17 @@ EraData.Eras = {
 }
 
 -- Neutral is not an element players can build chains in — it's the Start tile /
--- unclaimed default, kept separate from Eras so element-only iteration works.
-EraData.Neutral = {
+-- unclaimed default, kept separate from Elements so element-only iteration works.
+ElementData.Neutral = {
 	DisplayName = "Neutral",
 	Color = Color3.fromRGB(230, 225, 210),
 }
 
-function EraData.GetEra(eraId)
-	if eraId == nil then
-		return EraData.Neutral
+function ElementData.GetElement(elementId)
+	if elementId == nil then
+		return ElementData.Neutral
 	end
-	return EraData.Eras[eraId]
+	return ElementData.Elements[elementId]
 end
 
-return EraData
+return ElementData

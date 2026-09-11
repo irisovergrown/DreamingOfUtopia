@@ -39,7 +39,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Enums = require(ReplicatedStorage.Shared.Enums)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local CardData = require(ReplicatedStorage.Shared.CardData)
-local ElementData = require(ReplicatedStorage.Shared.EraData)
+local ElementData = require(ReplicatedStorage.Shared.ElementData)
 
 local Intent = Enums.Intent
 local localPlayer = Players.LocalPlayer
@@ -116,7 +116,8 @@ local function createTextBox(name, order, placeholder)
 	return box
 end
 
-local elementBox = createTextBox("ElementBox", 7, "element id (blank = neutral)")
+local elementBox = createTextBox("ElementBox", 6, "element id (blank = neutral)")
+local levelBox = createTextBox("LevelBox", 7, "develop to level (2-5)")
 
 local buttonRow = Instance.new("Frame")
 buttonRow.Name = "ButtonRow"
@@ -191,12 +192,28 @@ local buttonDefinitions = {
 		end,
 	},
 	{ Name = "PayTollButton", Text = "Pay Toll", Intent = Intent.PayToll },
+	-- The two territory commands that change land itself. Both send the same
+	-- intent and are told apart by Command, so adding the remaining three
+	-- (move creature, exchange creature, territory ability) needs no new
+	-- remote and no new intent.
+	{
+		Name = "LevelUpButton",
+		Text = "Level Up",
+		Intent = Intent.ChooseTerritoryCommand,
+		Payload = function()
+			local level = tonumber(levelBox.Text)
+			if level == nil then
+				return nil, "enter the level to develop to (2-5)"
+			end
+			return { Command = Enums.TerritoryCommand.LevelLand, Level = level }
+		end,
+	},
 	{
 		Name = "TerraformButton",
 		Text = "Terraform",
 		Intent = Intent.ChooseTerritoryCommand,
 		Payload = function()
-			return { Element = elementBox.Text }
+			return { Command = Enums.TerritoryCommand.ChangeElement, Element = elementBox.Text }
 		end,
 	},
 	{ Name = "EndTurnButton", Text = "End Turn", Intent = Intent.EndTurn },
@@ -346,7 +363,7 @@ local function buildCardFace(instance, order)
 	corner.Parent = button
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = card.Era and ElementData.GetEra(card.Era).Color or Color3.fromRGB(170, 170, 170)
+	stroke.Color = card.Element and ElementData.GetElement(card.Element).Color or Color3.fromRGB(170, 170, 170)
 	stroke.Thickness = 2
 	stroke.Parent = button
 
@@ -378,7 +395,7 @@ local function buildCardFace(instance, order)
 	text.Text = string.format(
 		"<b>%s</b>\n%s\n\n%s\n\n<i>%s</i>",
 		card.Name,
-		card.Era and ElementData.GetEra(card.Era).DisplayName or "Neutral",
+		card.Element and ElementData.GetElement(card.Element).DisplayName or "Neutral",
 		statLine,
 		card.RulesText or ""
 	)
@@ -481,7 +498,7 @@ end
 -- show in that space is where a player's cards actually are.
 
 local elementIds = {}
-for elementId in pairs(ElementData.Eras) do
+for elementId in pairs(ElementData.Elements) do
 	table.insert(elementIds, elementId)
 end
 table.sort(elementIds)
@@ -497,36 +514,53 @@ end
 
 -- === Rendering ==============================================================
 
-local function formatTile(tile)
-	if tile == nil then
-		return "Tile: —"
+-- Node ids are strings since Milestone 5, so this formats %s rather than %d.
+-- A castle or fort is a legitimate place to be standing and simply has no
+-- ownership to report, rather than being an absent tile.
+local function formatTile(view)
+	if view == nil then
+		return "Location: —"
 	end
 
-	local elementText = tile.Element and ElementData.GetEra(tile.Element).DisplayName or "Neutral"
-	local lines = { string.format("Tile #%d — %s — Lv%d", tile.TileId, elementText, tile.Level or 1) }
-
-	if tile.TileType == "Property" then
-		table.insert(lines, tile.Owner and ("Owner " .. tostring(tile.Owner)) or "Unclaimed")
-		if tile.DefenderName then
-			table.insert(lines, string.format("Defender: %s (%dHP)", tile.DefenderName, tile.DefenderHP))
-		end
-		if tile.Toll and tile.Toll > 0 then
-			table.insert(lines, "Toll: " .. tile.Toll)
-		end
+	if view.NodeType ~= "Territory" then
+		return string.format("%s — %s", view.NodeId, view.NodeType or "?")
 	end
+
+	local elementText = view.Element and ElementData.GetElement(view.Element).DisplayName or "Neutral"
+	local lines = {
+		string.format("%s — %s — Lv%d", view.NodeId, elementText, view.Level or 1),
+	}
+
+	table.insert(lines, view.Owner and ("Owner " .. tostring(view.Owner)) or "Unclaimed")
+	if view.LandValue then
+		table.insert(lines, "Value: " .. view.LandValue)
+	end
+	if view.DefenderName then
+		table.insert(lines, string.format("Defender: %s (%dHP)", view.DefenderName, view.DefenderHP))
+	end
+	if view.Toll and view.Toll > 0 then
+		table.insert(lines, "Toll: " .. view.Toll)
+	end
+
 	return table.concat(lines, "\n")
 end
 
 local function formatStandings(snapshot)
 	local lines = {}
 	for _, standing in ipairs(snapshot.Standings) do
+		-- TM first: it is what the standings are ordered by and what wins.
+		-- A goal-reached player is flagged, because everyone needs to know
+		-- who is walking home to win.
 		table.insert(lines, string.format(
-			"%s%d — %d Magic, %d land, %d cards",
+			"%s%d — TM %d  (CM %d, land %d)  %d tiles, %d cards%s",
 			standing.IsActive and "> " or "  ",
 			standing.UserId,
+			standing.TotalMagic or 0,
 			standing.CurrentMagic,
+			standing.LandValue or 0,
 			standing.TerritoriesOwned,
-			standing.HandCount
+			standing.HandCount,
+			standing.GoalReached and "  [GOAL]" or ""
 		))
 	end
 	return table.concat(lines, "\n")

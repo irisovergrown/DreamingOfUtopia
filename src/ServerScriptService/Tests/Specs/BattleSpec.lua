@@ -54,14 +54,16 @@ local hands
 local nextInstance
 
 local function stubs()
-	tile = { Id = TILE, TileType = "Property", Era = nil, Level = 1, Owner = DEFENDER }
+	tile = { Id = TILE, TileType = "Property", Element = nil, Level = 1, Owner = DEFENDER }
 	balances = { [ATTACKER] = 9999, [DEFENDER] = 9999 }
 	hands = { [ATTACKER] = {}, [DEFENDER] = {} }
 	nextInstance = 1
 
-	local board = {
-		GetTile = function(tileId)
-			return tileId == TILE and tile or nil
+	-- Stands in for TerritoryService. `tile` is a territory snapshot: the
+	-- shape BattleService reads is Element, Level and Owner.
+	local territory = {
+		GetTerritory = function(nodeId)
+			return nodeId == TILE and tile or nil
 		end,
 		SetOwner = function(_, ownerUserId)
 			tile.Owner = ownerUserId
@@ -94,7 +96,7 @@ local function stubs()
 	end
 
 	BattleService.Init({
-		Board = board,
+		Territory = territory,
 		Card = { GetCard = function(cardId) return cardsById[cardId] end },
 		Economy = economy,
 		Deck = deck,
@@ -151,7 +153,7 @@ return {
 			-- not inflate the stored health, or a later terraform leaves it
 			-- stale with no way to tell.
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 3
 			local state = placeDefender(TAPE_GNOME)
 
@@ -159,13 +161,13 @@ return {
 			t:Equal(BattleService.GetLandBonusFor(state, TILE), 30, "the bonus is computed, not stored")
 
 			-- Change the land underneath it; the bonus follows immediately.
-			tile.Era = "Fire"
+			tile.Element = "Fire"
 			t:Equal(BattleService.GetLandBonusFor(state, TILE), 0, "mismatched element, no bonus")
 		end },
 
 		{ "a neutral creature never receives a land bonus", function(t)
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 5
 			local state = placeDefender(SIGNAL_DRONE)
 			t:Equal(BattleService.GetLandBonusFor(state, TILE), 0)
@@ -365,7 +367,7 @@ return {
 			-- an effective 90 and survives a 60-power strike it would not
 			-- otherwise.
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 3
 			placeDefender(TAPE_GNOME)
 
@@ -374,7 +376,7 @@ return {
 
 			-- Without it, the same attack kills.
 			stubs()
-			tile.Era = "Fire"
+			tile.Element = "Fire"
 			tile.Level = 3
 			placeDefender(TAPE_GNOME)
 			local unprotected = invade(LASER_SALAMANDER, nil, nil)
@@ -385,7 +387,7 @@ return {
 			-- And so the survivor's carried damage still makes sense after the
 			-- battle: the bonus is gone, the health it protected is not.
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 3 -- +30
 			local state = placeDefender(TAPE_GNOME) -- 60 HP
 
@@ -396,7 +398,7 @@ return {
 
 		{ "damage past the bonus carries into persistent health", function(t)
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 1 -- +10
 			local state = placeDefender(FERRITE_GOLEM) -- 80 HP, Last
 
@@ -418,7 +420,7 @@ return {
 
 		{ "Penetration ignores the land bonus", function(t)
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 5 -- +50, a huge shield
 			placeDefender(TAPE_GNOME) -- 60 HP, so effectively 110
 
@@ -429,7 +431,7 @@ return {
 
 			-- Confirm the bonus really would have applied to another attacker.
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 5
 			local state = placeDefender(TAPE_GNOME)
 			invade(SIGNAL_DRONE, nil, nil)
@@ -458,7 +460,7 @@ return {
 		{ "a Scroll bypasses Neutralize and the land bonus", function(t)
 			-- The answer to a defender those keywords would make unkillable.
 			stubs()
-			tile.Era = "Earth"
+			tile.Element = "Earth"
 			tile.Level = 5
 			placeDefender(SPOOL_WARDEN) -- 55 HP, Neutralize, +50 land bonus
 

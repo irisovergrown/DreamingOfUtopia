@@ -72,7 +72,7 @@
 		would produce something that passes a test and models the wrong thing.
 
 	Public API:
-		BattleService.Init(deps)   -- Board, Card, Economy, Deck
+		BattleService.Init(deps)   -- Territory, Card, Economy, Deck
 		BattleService.SummonCreature(userId, instanceId, tileId) -> ActionResult
 		BattleService.BeginInvasion(userId, instanceId, tileId) -> ActionResult
 		BattleService.ChooseAttackerItem(userId, instanceIdOrNil) -> ActionResult
@@ -110,7 +110,7 @@ local SPEED_RANK = {
 	[Enums.SpeedClass.Last] = 1,
 }
 
-local _board, _card, _economy, _deck
+local _territory, _card, _economy, _deck
 
 -- tileId -> creature state
 local _defenders = {}
@@ -121,7 +121,7 @@ local _battle = nil
 
 function BattleService.Init(deps)
 	deps = deps or {}
-	_board = deps.Board
+	_territory = deps.Territory
 	_card = deps.Card
 	_economy = deps.Economy
 	_deck = deps.Deck
@@ -163,13 +163,13 @@ local function landBonusFor(state, tileId)
 	if state == nil then
 		return 0
 	end
-	local tile = _board.GetTile(tileId)
+	local tile = _territory.GetTerritory(tileId)
 	local card = _card.GetCard(state.CardId)
 	if tile == nil or card == nil then
 		return 0
 	end
 	-- Neutral creatures never receive it, even standing on elemental land.
-	if card.Era == nil or card.Era ~= tile.Era then
+	if card.Element == nil or card.Element ~= tile.Element then
 		return 0
 	end
 	return RulesConfig.getLandBonusHP(tile.Level)
@@ -367,7 +367,7 @@ local function finishBattle()
 			state.CurrentHP = maxHP(state)
 		end
 		_defenders[tileId] = state
-		_board.SetOwner(tileId, attacker.UserId)
+		_territory.SetOwner(tileId, attacker.UserId)
 		BattleService.TileClaimed:Fire(tileId, attacker.UserId, attacker.CardId)
 
 	elseif outcome == Enums.BattleOutcome.DefenderHolds then
@@ -378,7 +378,7 @@ local function finishBattle()
 
 	elseif outcome == Enums.BattleOutcome.BothDestroyed then
 		_defenders[tileId] = nil
-		_board.SetOwner(tileId, nil)
+		_territory.SetOwner(tileId, nil)
 
 	else -- BothSurvive
 		defender.State.CurrentHP = persistentHPAfter(defender)
@@ -452,8 +452,8 @@ function BattleService.SummonCreature(userId, instanceId, tileId)
 		return ActionResult.fail(Enums.RejectReason.InvalidCard, "only creatures can be summoned")
 	end
 
-	local tile = _board.GetTile(tileId)
-	if tile == nil or tile.TileType ~= "Property" then
+	local tile = _territory.GetTerritory(tileId)
+	if tile == nil then
 		return ActionResult.fail(Enums.RejectReason.InvalidTarget, "this territory cannot be claimed")
 	end
 	if tile.Owner ~= nil then
@@ -471,7 +471,7 @@ function BattleService.SummonCreature(userId, instanceId, tileId)
 	-- Defender state before SetOwner, so a listener repainting the tile sees
 	-- the creature on its very first refresh rather than one refresh later.
 	_defenders[tileId] = newCreatureState(instance.CardId, userId, instanceId)
-	_board.SetOwner(tileId, userId)
+	_territory.SetOwner(tileId, userId)
 	BattleService.TileClaimed:Fire(tileId, userId, instance.CardId)
 
 	return ActionResult.ok({ TileId = tileId, CardId = instance.CardId })
@@ -513,8 +513,8 @@ function BattleService.BeginInvasion(userId, instanceId, tileId)
 		return ActionResult.fail(Enums.RejectReason.InvalidCard, "only creatures can invade")
 	end
 
-	local tile = _board.GetTile(tileId)
-	if tile == nil or tile.TileType ~= "Property" or tile.Owner == nil then
+	local tile = _territory.GetTerritory(tileId)
+	if tile == nil or tile.Owner == nil then
 		return ActionResult.fail(Enums.RejectReason.InvalidTarget, "nothing to invade here")
 	end
 	if tile.Owner == userId then

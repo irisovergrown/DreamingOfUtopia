@@ -54,7 +54,7 @@ local MatchLogService = require(Systems.MatchLogService)
 local MatchOrchestrator = require(Systems.MatchOrchestrator)
 local ActionValidator = require(Systems.ActionValidator)
 local SnapshotService = require(Systems.SnapshotService)
-local BoardService = require(Systems.BoardService)
+local TerritoryService = require(Systems.TerritoryService)
 local BoardGraphService = require(Systems.BoardGraphService)
 local BoardVisualService = require(Systems.BoardVisualService)
 local LapService = require(Systems.LapService)
@@ -63,7 +63,8 @@ local MovementService = require(Systems.MovementService)
 local CardService = require(Systems.CardService)
 local EconomyService = require(Systems.EconomyService)
 local BattleService = require(Systems.BattleService)
-local TerraformService = require(Systems.TerraformService)
+local ValuationService = require(Systems.ValuationService)
+local VictoryService = require(Systems.VictoryService)
 local CardEffectService = require(Systems.CardEffectService)
 local DeckService = require(Systems.DeckService)
 
@@ -93,24 +94,27 @@ if not boardLoaded.Ok then
 	))
 end
 
-BoardService.Init() -- tile ownership/level state, keyed by the tagged Parts
+TerritoryService.Init({ Graph = BoardGraphService, Economy = EconomyService })
 LapService.Init({ Graph = BoardGraphService })
 MovementService.Init({
 	Graph = BoardGraphService,
 	Lap = LapService,
 	Random = RandomService.default(),
 })
-EconomyService.Init() -- subscribes to LapService.LapCompleted
+EconomyService.Init({ Territory = TerritoryService, Lap = LapService, Graph = BoardGraphService })
+ValuationService.Init({ Territory = TerritoryService, Economy = EconomyService })
+VictoryService.Init({ Valuation = ValuationService, Lap = LapService, Graph = BoardGraphService })
+VictoryService.SetGoal(ACTIVE_BOARD.TMGoal)
 DeckService.Init({ Random = RandomService.default() })
 BattleService.Init({
-	Board = BoardService,
+	Territory = TerritoryService,
 	Card = CardService,
 	Economy = EconomyService,
 	Deck = DeckService, -- battles consume and return real cards
 })
 
 BoardVisualService.Init({
-	Board = BoardService,
+	Territory = TerritoryService,
 	Battle = BattleService,
 	Card = CardService,
 	Movement = MovementService,
@@ -120,7 +124,10 @@ BoardVisualService.Init({
 SnapshotService.Init({
 	Orchestrator = MatchOrchestrator,
 	Validator = ActionValidator,
-	Board = BoardService,
+	Territory = TerritoryService,
+	Valuation = ValuationService,
+	Victory = VictoryService,
+	Graph = BoardGraphService,
 	Movement = MovementService,
 	Economy = EconomyService,
 	Battle = BattleService,
@@ -220,20 +227,15 @@ local function endTurnAndAdvance()
 		return
 	end
 
-	-- Victory is still Current Magic against a target; Total Magic and the
-	-- return-to-castle confirmation arrive in Milestone 5.
-	local winnerId = nil
-	for _, userId in ipairs(MatchOrchestrator.GetParticipants()) do
-		local balance = EconomyService.GetBalance(userId)
-		if balance ~= nil and balance >= 3000 then
-			winnerId = userId
-			break
-		end
-	end
+	-- Victory is Total Magic, and reaching the goal is NOT winning — it is a
+	-- visible state that has to be confirmed at the castle, and can be lost on
+	-- the way there. Recomputed for every player because one player's capture
+	-- shrinks another player's chain and so moves another player's total.
+	VictoryService.RefreshGoalStates(MatchOrchestrator.GetParticipants())
 
-	if winnerId ~= nil then
-		MatchOrchestrator.TransitionTo(Phase.MatchComplete, "win target reached")
-		MatchLogService.Append("MatchWon", { UserId = winnerId })
+	if VictoryService.IsMatchWon() then
+		MatchOrchestrator.TransitionTo(Phase.MatchComplete, "victory confirmed at the castle")
+		MatchLogService.Append("MatchWon", { UserId = VictoryService.GetWinner() })
 		pushStateToAll()
 		return
 	end
@@ -254,20 +256,19 @@ end
 -- normal outcome, not an error.
 -- The brief's landing action matrix. An empty list means the turn simply ends:
 -- landing somewhere with nothing to do is a normal outcome, not an error.
-local function landingActionsFor(userId, tileId)
-	local tile = BoardService.GetTile(tileId)
-	if tile == nil or tile.TileType ~= "Property" then
+local function landingActionsFor(userId, nodeId)
+	local territory = TerritoryService.GetTerritory(nodeId)
+	if territory == nil then
 		return {} -- the castle and special nodes resolve on their own
 	end
 
-	if tile.Owner == nil then
+	if territory.Owner == nil then
 		-- Empty: claim it, or walk on.
 		return { Intent.ChooseSummon }
 	end
 
-	if tile.Owner == userId then
-		-- Your own land. Territory commands (level up, terrain change) land in
-		-- Milestone 5; terraforming is offered here because it already exists.
+	if territory.Owner == userId then
+		-- Your own land: level it up or change its element.
 		return { Intent.ChooseTerritoryCommand }
 	end
 
@@ -307,8 +308,8 @@ local function settleMovement(player, movementResult)
 		return
 	end
 
-	local tileId = MovementService.GetCurrentTile(player)
-	if #landingActionsFor(player.UserId, tileId) == 0 then
+	local nodeId = MovementService.GetCurrentNodeId(player)
+	if #landingActionsFor(player.UserId, nodeId) == 0 then
 		endTurnAndAdvance()
 		return
 	end
@@ -389,31 +390,31 @@ intentHandlers[Intent.ChooseSummon] = function(player, payload)
 	end
 	local cardId = instance.CardId
 
-	local tileId = MovementService.GetCurrentTile(player)
-	local tile = BoardService.GetTile(tileId)
-	local isInvasion = tile ~= nil and tile.Owner ~= nil and tile.Owner ~= player.UserId
+	local nodeId = MovementService.GetCurrentNodeId(player)
+	local territory = TerritoryService.GetTerritory(nodeId)
+	local isInvasion = territory ~= nil and territory.Owner ~= nil and territory.Owner ~= player.UserId
 
 	if isInvasion then
 		-- An invasion is not resolved here. It opens the battle state machine
 		-- and the turn parks in the item-choice phases until both sides have
 		-- committed. BattleService consumes the card itself.
-		local began = BattleService.BeginInvasion(player.UserId, instanceId, tileId)
+		local began = BattleService.BeginInvasion(player.UserId, instanceId, nodeId)
 		if not began.Ok then
 			return { Ok = false, Code = began.Code, Message = began.Message }
 		end
 
 		advanceThrough({ Phase.BattleSetup, Phase.AttackerItemChoice }, "invasion declared")
 		pushStateToAll()
-		return { Ok = true, Message = "Invading tile #" .. tileId }
+		return { Ok = true, Message = "Invading " .. nodeId }
 	end
 
-	local claimed = BattleService.SummonCreature(player.UserId, instanceId, tileId)
+	local claimed = BattleService.SummonCreature(player.UserId, instanceId, nodeId)
 	if not claimed.Ok then
 		return { Ok = false, Code = claimed.Code, Message = claimed.Message }
 	end
 
 	task.spawn(endTurnAndAdvance)
-	return { Ok = true, Message = "Claimed tile #" .. tileId }
+	return { Ok = true, Message = "Claimed " .. nodeId }
 end
 
 -- Applies a resolved battle: the toll if one is owed, then the turn ends.
@@ -430,10 +431,7 @@ local function settleBattle(result)
 
 	if result.TollOwed then
 		advanceThrough({ Phase.TollResolution }, "invader owes the toll")
-		local attacker = Players:GetPlayerByUserId(result.AttackerUserId)
-		if attacker then
-			EconomyService.PayToll(attacker, result.TileId)
-		end
+		EconomyService.PayToll(result.AttackerUserId, result.TileId)
 	end
 
 	endTurnAndAdvance()
@@ -472,29 +470,114 @@ intentHandlers[Intent.ChooseBattleItem] = function(player, payload)
 end
 
 intentHandlers[Intent.PayToll] = function(player)
-	local tileId = MovementService.GetCurrentTile(player)
-	local ok, reason = EconomyService.PayToll(player, tileId)
-	if not ok then
-		return { Ok = false, Code = Enums.RejectReason.InsufficientMagic, Message = tostring(reason) }
+	local nodeId = MovementService.GetCurrentNodeId(player)
+	advanceThrough({ Phase.TollResolution }, "toll declined into payment")
+
+	-- A toll is mandatory: RequirePayment takes what is available and records
+	-- the rest as a debt rather than refusing, so an unaffordable toll leads to
+	-- liquidation instead of leaving the payment simply undone.
+	local result = EconomyService.PayToll(player.UserId, nodeId)
+	if not result.Ok then
+		MatchOrchestrator.TransitionTo(Phase.LandingActionChoice, "no toll owed")
+		return { Ok = false, Code = result.Code, Message = result.Message }
 	end
+
+	local payload = result.Payload
+	if payload.Shortfall > 0 then
+		advanceThrough({ Phase.Liquidation }, "cannot cover the toll")
+		MatchLogService.Append("PaymentShortfall", { UserId = player.UserId, Shortfall = payload.Shortfall })
+		pushStateToAll()
+		return {
+			Ok = true,
+			Message = string.format("Paid %d of %d — %d still owed", payload.Paid, payload.Toll, payload.Shortfall),
+		}
+	end
+
 	task.spawn(endTurnAndAdvance)
-	return { Ok = true, Message = "Toll paid" }
+	return { Ok = true, Message = string.format("Toll paid: %d", payload.Toll) }
 end
 
+-- One command per turn, on the territory you landed on. The brief allows more
+-- targets (anything crossed this move, or anywhere at all from a castle) and
+-- more commands (move creature, exchange creature, territory ability); those
+-- need the movement path recorded and creature relocation, and land in a later
+-- pass. What is here is the two commands that change land itself.
 intentHandlers[Intent.ChooseTerritoryCommand] = function(player, payload)
-	local targetElement = payload and payload.Element
-	if targetElement ~= nil and typeof(targetElement) ~= "string" then
-		return { Ok = false, Code = Enums.RejectReason.InvalidTarget, Message = "bad element" }
+	local nodeId = MovementService.GetCurrentNodeId(player)
+	local command = payload and payload.Command
+
+	advanceThrough({ Phase.TerritoryCommandChoice }, "territory command")
+
+	local result
+	if command == Enums.TerritoryCommand.LevelLand then
+		result = TerritoryService.LevelUp(player.UserId, nodeId, payload.Level)
+	elseif command == Enums.TerritoryCommand.ChangeElement then
+		-- An empty string means neutral, which is a legal destination.
+		local element = payload.Element
+		if element == "" then
+			element = nil
+		end
+		result = TerritoryService.ChangeElement(player.UserId, nodeId, element)
+	else
+		return {
+			Ok = false,
+			Code = Enums.RejectReason.IllegalAction,
+			Message = "unknown territory command " .. tostring(command),
+		}
 	end
 
-	local normalized = (targetElement ~= "" and targetElement) or nil
-	local tileId = MovementService.GetCurrentTile(player)
-	local ok, reason = TerraformService.TerraformTile(player, tileId, normalized)
-	if not ok then
-		return { Ok = false, Code = Enums.RejectReason.RuleViolation, Message = tostring(reason) }
+	if not result.Ok then
+		-- Refused, so the command was never spent. Return to the action window
+		-- rather than burning the player's turn on a rejected request.
+		MatchOrchestrator.TransitionTo(Phase.LandingActionChoice, "command refused")
+		return { Ok = false, Code = result.Code, Message = result.Message }
 	end
+
+	advanceThrough({ Phase.TerritoryCommandResolution }, "command resolved")
 	task.spawn(endTurnAndAdvance)
-	return { Ok = true, Message = "Terraformed tile #" .. tileId }
+
+	return {
+		Ok = true,
+		Message = string.format("%s on %s for %d Magic", command, nodeId, result.Payload.Cost),
+	}
+end
+
+intentHandlers[Intent.ChooseLiquidation] = function(player, payload)
+	local nodeId = payload and payload.NodeId
+	if typeof(nodeId) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidTarget, Message = "choose a territory to sell" }
+	end
+
+	local sale = EconomyService.LiquidateTerritory(player.UserId, nodeId)
+	if not sale.Ok then
+		return { Ok = false, Code = sale.Code, Message = sale.Message }
+	end
+
+	MatchLogService.Append("Liquidated", {
+		UserId = player.UserId,
+		NodeId = nodeId,
+		Proceeds = sale.Payload.Proceeds,
+	})
+
+	if sale.Payload.RemainingDebt > 0 then
+		-- Still short. Stay in Liquidation and sell something else; the turn
+		-- cannot continue while a mandatory payment is outstanding.
+		if EconomyService.IsBankrupt(player.UserId) then
+			EconomyService.DeclareBankrupt(player.UserId)
+			TerritoryService.ReleaseAllOwnedBy(player.UserId)
+			MatchLogService.Append("Bankrupted", { UserId = player.UserId })
+			task.spawn(endTurnAndAdvance)
+			return { Ok = true, Message = "Bankrupt — nothing left to sell" }
+		end
+		pushStateToAll()
+		return {
+			Ok = true,
+			Message = string.format("Sold %s — %d still owed", nodeId, sale.Payload.RemainingDebt),
+		}
+	end
+
+	task.spawn(endTurnAndAdvance)
+	return { Ok = true, Message = string.format("Sold %s for %d", nodeId, sale.Payload.Proceeds) }
 end
 
 intentHandlers[Intent.EndTurn] = function()
@@ -568,7 +651,7 @@ end)
 
 local function onPlayerAdded(player)
 	MovementService.RegisterCepter(player)
-	EconomyService.RegisterPlayer(player)
+	EconomyService.RegisterPlayer(player.UserId, ACTIVE_BOARD.DefaultMagic)
 	MatchOrchestrator.AddParticipant(player.UserId)
 	BoardVisualService.CreateCepterToken(player)
 
@@ -593,7 +676,11 @@ local function onPlayerRemoving(player)
 
 	MovementService.RemoveCepter(player)
 	DeckService.RemovePlayer(player.UserId)
-	EconomyService.RemovePlayer(player)
+	EconomyService.RemovePlayer(player.UserId)
+	-- Released, not left owned by a ghost: every chain those territories were
+	-- part of has to shrink, or the board keeps charging tolls on behalf of
+	-- someone who is gone.
+	TerritoryService.ReleaseAllOwnedBy(player.UserId)
 	BoardVisualService.RemoveCepterToken(player)
 	MatchOrchestrator.RemoveParticipant(player.UserId)
 
@@ -611,6 +698,29 @@ end
 MovementService.CepterLanded:Connect(function(userId, nodeId)
 	MatchLogService.Append("CepterLanded", { UserId = userId, NodeId = nodeId })
 end, 0, "Main.CepterLanded")
+
+-- Victory is confirmed by ARRIVING, so this listens to node entry rather than
+-- to the end of a turn. It fires on a crossing as well as a landing, which is
+-- the brief's rule: reaching or crossing the castle confirms it. TM is
+-- re-checked inside TryConfirmAtCastle, so a player who slipped under the goal
+-- on the way home arrives to nothing.
+MovementService.NodeEntered:Connect(function(userId, nodeId)
+	if VictoryService.TryConfirmAtCastle(userId, nodeId) then
+		MatchLogService.Append("VictoryConfirmed", {
+			UserId = userId,
+			NodeId = nodeId,
+			TotalMagic = ValuationService.GetTotalMagic(userId),
+		})
+	end
+end, 10, "Main.CastleVictoryCheck")
+
+VictoryService.GoalReached:Connect(function(userId, totalMagic)
+	MatchLogService.Append("GoalReached", { UserId = userId, TotalMagic = totalMagic })
+end, 0, "Main.GoalReached")
+
+VictoryService.GoalLost:Connect(function(userId, totalMagic)
+	MatchLogService.Append("GoalLost", { UserId = userId, TotalMagic = totalMagic })
+end, 0, "Main.GoalLost")
 
 LapService.LapCompleted:Connect(function(userId, lapNumber)
 	MatchLogService.Append("LapCompleted", { UserId = userId, Lap = lapNumber })
@@ -635,8 +745,8 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 print(string.format(
-	"[DreamingOfUtopia] Ready — %d tiles, %d cards, phase %s",
-	#BoardService.GetAllTiles(),
+	"[DreamingOfUtopia] Ready — %d territories, %d cards, phase %s",
+	#TerritoryService.GetAllTerritories(),
 	#CardService.GetAllCards(),
 	MatchOrchestrator.GetPhase()
 ))

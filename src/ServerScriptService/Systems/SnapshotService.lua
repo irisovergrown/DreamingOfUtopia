@@ -31,7 +31,7 @@
 
 		`sources` injects the services this reads, so a test can build
 		snapshots from stubs rather than a live match:
-			{ Orchestrator, Validator, Board, Movement, Economy, Battle, Card }
+			{ Orchestrator, Validator, Territory, Valuation, Victory, Graph, Movement, Economy, Battle, Card }
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -52,27 +52,28 @@ end
 local function buildStandings()
 	local orchestrator = _sources.Orchestrator
 	local economy = _sources.Economy
-	local board = _sources.Board
+	local territory = _sources.Territory
+	local valuation = _sources.Valuation
+	local victory = _sources.Victory
 	local movement = _sources.Movement
 
 	local standings = {}
 	for _, userId in ipairs(_sources.GetParticipants and _sources.GetParticipants() or {}) do
-		local ownedCount = 0
-		if board then
-			for _, tile in ipairs(board.GetAllTiles()) do
-				if tile.Owner == userId then
-					ownedCount += 1
-				end
-			end
-		end
-
 		table.insert(standings, {
 			UserId = userId,
+			-- Current Magic is what you can spend; Total Magic is what you are
+			-- worth and what wins. Both are public — standings that showed only
+			-- cash would rank a landowner last.
 			CurrentMagic = economy and economy.GetBalance(userId) or 0,
-			TerritoriesOwned = ownedCount,
+			TotalMagic = valuation and valuation.GetTotalMagic(userId) or 0,
+			LandValue = valuation and valuation.GetLandValue(userId) or 0,
+			TerritoriesOwned = territory and #territory.GetOwnedBy(userId) or 0,
+			-- A player on the goal-reached walk home is a public threat, and
+			-- the other players need to see it to react.
+			GoalReached = victory and victory.IsGoalReachedState(userId) or false,
 			-- Both accept a bare userId; standings are built from participant
 			-- ids and there is no Player instance to hand.
-			TileId = movement and movement.GetCurrentTile and movement.GetCurrentTile(userId) or nil,
+			NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
 			LapCount = movement and movement.GetLapCount and movement.GetLapCount(userId) or 0,
 			IsActive = orchestrator and orchestrator.IsActivePlayer(userId) or false,
 			-- Count, never contents. This is the line hands must not cross.
@@ -81,6 +82,9 @@ local function buildStandings()
 	end
 
 	table.sort(standings, function(a, b)
+		if a.TotalMagic ~= b.TotalMagic then
+			return a.TotalMagic > b.TotalMagic
+		end
 		return a.UserId < b.UserId
 	end)
 	return standings
@@ -101,29 +105,38 @@ end
 
 -- A tile's public facts. Ownership, level and element are all public in
 -- Culdcept: the board is information everyone shares.
-local function buildTileView(tileId)
-	local board = _sources.Board
+local function buildTileView(nodeId)
+	local territory = _sources.Territory
+	local graph = _sources.Graph
 	local battle = _sources.Battle
 	local card = _sources.Card
-	if board == nil or tileId == nil then
+	if nodeId == nil then
 		return nil
 	end
 
-	local tile = board.GetTile(tileId)
-	if tile == nil then
-		return nil
+	-- Not every node is a territory. A castle or a fort still deserves a view
+	-- so the HUD can say where you are, it just has no ownership to report.
+	local state = territory and territory.GetTerritory(nodeId)
+	if state == nil then
+		local node = graph and graph.GetNode(nodeId)
+		if node == nil then
+			return nil
+		end
+		return { NodeId = nodeId, NodeType = node.Type, Toll = 0 }
 	end
 
 	local view = {
-		TileId = tile.Id,
-		TileType = tile.TileType,
-		Element = tile.Era,
-		Level = tile.Level,
-		Owner = tile.Owner,
-		Toll = (tile.TileType == "Property" and tile.Owner ~= nil) and board.GetToll(tileId) or 0,
+		NodeId = nodeId,
+		NodeType = Enums.NodeType.Territory,
+		Element = state.Element,
+		Level = state.Level,
+		Owner = state.Owner,
+		BaseValue = state.BaseValue,
+		LandValue = territory.GetLandValue(nodeId),
+		Toll = territory.GetToll(nodeId),
 	}
 
-	local defender = battle and battle.GetDefender(tileId)
+	local defender = battle and battle.GetDefender(nodeId)
 	if defender then
 		local defenderCard = card and card.GetCard(defender.CardId)
 		view.DefenderName = defenderCard and defenderCard.Name or nil
@@ -197,7 +210,7 @@ function SnapshotService.Build(userId)
 		UserId = userId,
 		CurrentMagic = economy and economy.GetBalance(userId) or 0,
 		IsYourTurn = orchestrator and orchestrator.IsActivePlayer(userId) or false,
-		TileId = movement and movement.GetCurrentTile and movement.GetCurrentTile(userId) or nil,
+		NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
 		NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
 		-- Your own hand, always sent to you because it is yours. What is
 		-- DISPLAYED is decided by HandView, which shows only the active
@@ -237,7 +250,7 @@ function SnapshotService.Build(userId)
 		}, userId)
 	end
 
-	snapshot.CurrentTile = buildTileView(snapshot.You.TileId)
+	snapshot.CurrentTile = buildTileView(snapshot.You.NodeId)
 	snapshot.HandView = buildHandView(userId, spotlightUserId())
 
 	return snapshot

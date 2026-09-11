@@ -662,11 +662,38 @@ faking them as battle-local flags would pass a test and model the wrong thing.
 `BothDestroyed` is handled but unreachable with the current keywords — Reflect
 zeroes incoming damage and so spares the reflector.
 
+**Milestone 5 is complete.** `TerritoryService` replaces BoardService and
+TerraformService, keyed by **node id** — one name for a place on the board
+instead of two. State seeds from the board definition, not from Part
+attributes, which is why the Era→Element rename needed no attribute migration:
+the attribute simply stopped being read at runtime.
+
+**Current Magic and Total Magic are now separate quantities.** CM is spendable
+cash (EconomyService); TM is CM + land + symbols (ValuationService) and is what
+standings and victory read. This is the whole strategic loop — verified live:
+developing a territory from level 1 to 3 cost **300 CM** and raised land value
+by **450**, so TM went **up 150** while cash went down. With one balance that
+reads as pure loss.
+
+**Victory is two steps.** Reaching the TM goal is a visible *state*, not a win;
+it must be confirmed by reaching or crossing a castle, where TM is
+**re-checked** — so a rival who takes your land on the way home can put you
+back under the line and arriving wins nothing.
+
+Chains are **area-scoped** (same element, same owner, same area). An
+unaffordable toll now enters **liquidation** rather than being refused:
+`RequirePayment` takes what is available and records a debt, territories are
+sold at `RulesConfig.Liquidation.SaleRate`, and a player with debt and no land
+is bankrupt.
+
+Terraforming works on **your own occupied land** — the unclaimed-only rule was
+a workaround for the M4 HP defect, and fixing that removed its reason.
+
 Milestones, in order: **M0 safety net and schemas** (done), **M1 match/turn
 state machine** (done), **M2 graph movement** (done), **M3 book/hand/card
-lifecycle** (done), **M4 landing and battle** (done), M5 territory and full
-economy, M6 card/status/special-node engine, M7 content and presentation,
-M8 secondary-system skeletons. Build a complete
+lifecycle** (done), **M4 landing and battle** (done), **M5 territory and full
+economy** (done), M6 card/status/special-node engine, M7 content and
+presentation, M8 secondary-system skeletons. Build a complete
 local match before matchmaking, campaign or monetization; those get interfaces
 early and skeletal implementations.
 

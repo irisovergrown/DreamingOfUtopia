@@ -21,7 +21,7 @@
 		CardService.GetCard(cardId) -> card or nil
 		CardService.GetAllCards() -> array of cards
 		CardService.GetCardsByType(cardType) -> array of cards
-		CardService.GetCardsByEra(era) -> array of cards
+		CardService.GetCardsByElement(era) -> array of cards
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -57,10 +57,10 @@ function CardService.GetCardsByType(cardType)
 	return cards
 end
 
-function CardService.GetCardsByEra(era)
+function CardService.GetCardsByElement(era)
 	local cards = {}
 	for _, card in ipairs(CardData.Cards) do
-		if card.Era == era then
+		if card.Element == era then
 			table.insert(cards, card)
 		end
 	end
