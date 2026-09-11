@@ -66,6 +66,8 @@ local BattleService = require(Systems.BattleService)
 local ValuationService = require(Systems.ValuationService)
 local VictoryService = require(Systems.VictoryService)
 local CardEffectService = require(Systems.CardEffectService)
+local EffectPrimitives = require(Systems.EffectPrimitives)
+local StatusService = require(Systems.StatusService)
 local DeckService = require(Systems.DeckService)
 
 local Phase = Enums.Phase
@@ -96,10 +98,15 @@ end
 
 TerritoryService.Init({ Graph = BoardGraphService, Economy = EconomyService })
 LapService.Init({ Graph = BoardGraphService })
+-- Initialised before the systems that fold through it, so no service is ever
+-- handed a nil Status and silently degrades to "no effects exist".
+StatusService.Init({ Log = MatchLogService })
+
 MovementService.Init({
 	Graph = BoardGraphService,
 	Lap = LapService,
 	Random = RandomService.default(),
+	Status = StatusService,
 })
 EconomyService.Init({ Territory = TerritoryService, Lap = LapService, Graph = BoardGraphService })
 ValuationService.Init({ Territory = TerritoryService, Economy = EconomyService })
@@ -111,6 +118,36 @@ BattleService.Init({
 	Card = CardService,
 	Economy = EconomyService,
 	Deck = DeckService, -- battles consume and return real cards
+	Status = StatusService,
+})
+
+-- The card engine: primitives are the verbs, CardEffectService reads a card's
+-- Effects list and runs them. Neither knows any card by name.
+EffectPrimitives.Init({
+	Economy = EconomyService,
+	Deck = DeckService,
+	Status = StatusService,
+	Battle = BattleService,
+	Movement = MovementService,
+	Graph = BoardGraphService,
+})
+
+CardEffectService.Init({
+	Card = CardService,
+	Economy = EconomyService,
+	Deck = DeckService,
+	Movement = MovementService,
+	Territory = TerritoryService,
+	Status = StatusService,
+	Log = MatchLogService,
+	IsParticipant = function(userId)
+		for _, participantId in ipairs(MatchOrchestrator.GetParticipants()) do
+			if participantId == userId then
+				return true
+			end
+		end
+		return false
+	end,
 })
 
 BoardVisualService.Init({
@@ -132,6 +169,7 @@ SnapshotService.Init({
 	Economy = EconomyService,
 	Battle = BattleService,
 	Card = CardService,
+	Status = StatusService,
 	GetParticipants = MatchOrchestrator.GetParticipants,
 	GetParticipantSet = MatchOrchestrator.GetParticipantSet,
 	GetHandCount = DeckService.GetHandCount,
@@ -210,20 +248,37 @@ local function beginTurnFor(userId)
 		return
 	end
 
-	-- SpellChoice is traversed rather than skipped: casting arrives in
-	-- Milestone 6, but the phase is real, logged, and already in place.
-	advanceThrough({ Phase.SpellChoice, Phase.RollReady }, "no spell casting yet")
+	-- SpellChoice now STOPS here. It was traversed through M1-M5 because there
+	-- was nothing to cast; there is now, and declining has to be a real choice
+	-- the player makes rather than the absence of one — otherwise the server
+	-- has already moved to RollReady before the client could offer the button.
+	advanceThrough({ Phase.SpellChoice }, "spell phase open")
 	pushStateToAll()
 end
 
 -- Resumes the turn once an over-full hand has been brought back to the cap.
 local function continueAfterDiscard()
-	advanceThrough({ Phase.SpellChoice, Phase.RollReady }, "hand is legal again")
+	advanceThrough({ Phase.SpellChoice }, "hand is legal again")
 	pushStateToAll()
 end
 
 local function endTurnAndAdvance()
-	if not advanceThrough({ Phase.TurnEnd, Phase.VictoryCheck }, "turn over") then
+	if not advanceThrough({ Phase.TurnEnd }, "turn over") then
+		return
+	end
+
+	-- End-of-turn statuses fire here, inside the phase named for them, before
+	-- victory is evaluated: poison that damages a creature has to be counted
+	-- in this turn's totals, not next turn's.
+	local endingUserId = MatchOrchestrator.GetActivePlayerId()
+	StatusService.FireHook(Enums.TimingHook.TurnEnd, {
+		UserId = endingUserId,
+		GetCreature = BattleService.GetDefender,
+		DamageCreature = BattleService.DamageDefender,
+	})
+	StatusService.TickDurations(Enums.DurationType.Turns, endingUserId)
+
+	if not advanceThrough({ Phase.VictoryCheck }, "turn over") then
 		return
 	end
 
@@ -247,6 +302,11 @@ local function endTurnAndAdvance()
 
 	if wrapped then
 		MatchOrchestrator.TransitionTo(Phase.RoundEnd, "rotation wrapped")
+		-- Round-scoped statuses expire here and nowhere else. A match-wide
+		-- effect that lasts "a round" has to tick once per rotation, not once
+		-- per player, or its stated duration is a lie by the player count.
+		StatusService.FireHook(Enums.TimingHook.RoundEnd, {})
+		StatusService.TickDurations(Enums.DurationType.Rounds)
 	end
 	beginTurnFor(nextUserId)
 end
@@ -329,12 +389,72 @@ end
 
 local intentHandlers = {}
 
+-- A spell is cast, its effects resolve, and the phase stays open — Culdcast
+-- allows a second spell only through Doublecast, but nothing here forces the
+-- player to leave the phase after one either. SkipSpell is what advances.
+intentHandlers[Intent.CastSpell] = function(player, payload)
+	local instanceId = payload and payload.InstanceId
+	if typeof(instanceId) ~= "string" then
+		return { Ok = false, Code = Enums.RejectReason.InvalidCard, Message = "no card chosen" }
+	end
+
+	local resolved = CardEffectService.Resolve(player.UserId, instanceId, {
+		TargetUserId = payload.TargetUserId,
+		TargetNodeId = payload.TargetNodeId,
+	})
+	if not resolved.Ok then
+		-- Refused, nothing spent: the player is still in SpellChoice and may
+		-- choose again. This is the case the refund path exists for.
+		return { Ok = false, Code = resolved.Code, Message = resolved.Message }
+	end
+
+	task.spawn(function()
+		-- Traversed, not skipped. The effects have already run — this records
+		-- WHERE they ran, which is what a later Doublecast needs to return to.
+		advanceThrough({ Phase.SpellResolution, Phase.SpellChoice }, "spell resolved")
+		pushStateToAll()
+	end)
+	return { Ok = true, Message = string.format("Cast %s", tostring(resolved.Payload.Name)) }
+end
+
+intentHandlers[Intent.SkipSpell] = function()
+	task.spawn(function()
+		advanceThrough({ Phase.RollReady }, "spell phase declined")
+		pushStateToAll()
+	end)
+	return { Ok = true, Message = "No spell" }
+end
+
 intentHandlers[Intent.Roll] = function(player)
-	local total = MovementService.RollDice(1)
-	MatchLogService.Append("Rolled", { UserId = player.UserId, Total = total })
+	-- Paralysis is a status, not a flag: BeforeRoll decides whether the dice
+	-- are thrown at all, and a refused roll still costs the turn.
+	if not MovementService.CanRoll(player.UserId) then
+		MatchLogService.Append("RollPrevented", { UserId = player.UserId })
+		task.spawn(function()
+			advanceThrough({ Phase.DiceResolution, Phase.Movement, Phase.LandingResolution }, "roll prevented")
+			endTurnAndAdvance()
+		end)
+		return { Ok = true, Message = "You cannot roll this turn" }
+	end
+
+	local total, _rolls, natural = MovementService.RollDice(1, player.UserId)
+	MatchLogService.Append("Rolled", {
+		UserId = player.UserId,
+		Total = total,
+		Natural = natural,
+	})
 	-- Movement resolves in the same call, so the phase never rests in
 	-- DiceResolution or Movement waiting on anything.
 	task.spawn(resolveMovementAndLanding, player, total)
+
+	if natural ~= nil and natural ~= total then
+		-- Reported, not hidden: a player whose roll was changed by a card has
+		-- to be able to see that it was.
+		return {
+			Ok = true,
+			Message = string.format("Rolled %d (natural %d)", total, natural),
+		}
+	end
 	return { Ok = true, Message = string.format("Rolled %d", total) }
 end
 

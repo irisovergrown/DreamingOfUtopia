@@ -46,6 +46,29 @@ function SnapshotService.Init(sources)
 	_sources = sources or {}
 end
 
+-- A player's statuses, filtered to the ones everyone may see. A hidden status
+-- is omitted entirely rather than sent with a flag saying not to show it: a
+-- client that receives one can render it regardless of what the flag said.
+-- Same reasoning as hands — secrecy is what you do not send.
+local function buildStatusView(userId)
+	local status = _sources.Status
+	if status == nil then
+		return {}
+	end
+
+	local view = {}
+	for _, entry in ipairs(status.GetStatuses(Enums.StatusTarget.Player, userId)) do
+		if entry.Visibility == Enums.Visibility.Public then
+			table.insert(view, {
+				Kind = entry.Kind,
+				Value = entry.Value,
+				Remaining = entry.RemainingDuration,
+			})
+		end
+	end
+	return view
+end
+
 -- Every player's visible standing. Deliberately counts and totals only —
 -- adding a field here makes it visible to every opponent, so anything
 -- identity-revealing belongs in the private section instead.
@@ -78,6 +101,9 @@ local function buildStandings()
 			IsActive = orchestrator and orchestrator.IsActivePlayer(userId) or false,
 			-- Count, never contents. This is the line hands must not cross.
 			HandCount = _sources.GetHandCount and _sources.GetHandCount(userId) or 0,
+			-- Public statuses. Being poisoned or hasted is something opponents
+			-- have to be able to see, or they cannot play around it.
+			Statuses = buildStatusView(userId),
 		})
 	end
 
@@ -210,7 +236,6 @@ function SnapshotService.Build(userId)
 		UserId = userId,
 		CurrentMagic = economy and economy.GetBalance(userId) or 0,
 		IsYourTurn = orchestrator and orchestrator.IsActivePlayer(userId) or false,
-		NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
 		NodeId = movement and movement.GetCurrentNodeId and movement.GetCurrentNodeId(userId) or nil,
 		-- Your own hand, always sent to you because it is yours. What is
 		-- DISPLAYED is decided by HandView, which shows only the active

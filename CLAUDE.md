@@ -252,30 +252,34 @@ Systems built so far:
   and show, not just a comment next to a color. Fixed at 4 by design
   decision, not open-ended (was, back when eras were the element system
   itself).
-- **`Systems/BoardService`** (ModuleScript, server) — authoritative owner
-  of the board itself, now **hand-authored**: tiles are Parts placed
-  directly in Workspace by the developer (own board designs, not
-  code-generated), tagged `"Tile"` via `CollectionService`, with attributes
-  set in Studio's Properties panel: `Id` (number, required — order in the
-  movement loop; does NOT need to be contiguous, only uniquely orderable,
-  since `GetNextTileId` sorts once at `Init` and walks that order rather
-  than doing `id + 1` arithmetic), `TileType` (`"Start"` or `"Property"`,
-  required), `Era` (must match an `EraData.Eras` key, or blank for
-  neutral/Start, optional), `BaseValue` (optional, defaults to 0 for Start
-  / 100 for Property). `Init` scans `CollectionService:GetTagged("Tile")`
-  and builds the runtime tile registry from those attributes — a tile
-  missing `Id` is skipped with a `warn()`. Everything about a tile's
-  *appearance* (its Part's Position/Color/Material/model) is entirely
-  Studio-authored and BoardService never touches or needs it — Owner/
-  Level/Era are the only mutable runtime state it tracks, mutated only
-  through its public API (`SetOwner`, `LevelUp`, `SetEra`), never touched
-  directly by other systems. Implements the toll/value formulas from the
-  gameplay reference (`GetTileValue`, `GetToll`, `GetChainMultiplier`,
-  `GetLandBonusHP`). Fires `TileOwnerChanged` / `TileLeveledUp` /
-  `EraChanged` signals. `tools/recreate-placeholder-board.lua` is a
-  one-time Studio Command Bar script (not part of the runtime game) that
-  recreates the old procedural 16-tile loop as real tagged/attributed
-  Parts — a working starting point to hand-edit from, not required.
+- **`Systems/TerritoryService`** (ModuleScript, server) — authoritative owner
+  of territory state: owner, level, element, base value, keyed by **node id**.
+  Replaced `BoardService` and `TerraformService` in Milestone 5 (both deleted;
+  ignore any older reference to them). State seeds from the board definition
+  rather than from Part attributes, which is why the Era→Element rename needed
+  no attribute migration — the attribute simply stopped being read at runtime.
+  Owns `GetChainSize` (area-scoped: same element, same owner, same area),
+  `LevelUp` and `ChangeElement`, and the toll/value formulas from
+  `RulesConfig`. A tile's *appearance* is entirely Studio-authored and this
+  module never touches it.
+- **`Systems/BoardGraphService`** (ModuleScript, server) — pure topology, no
+  ownership and no tolls. `GetLegalExits(nodeId, cameFromNodeId)` compares
+  **destinations, not edge ids**, because a two-way path is two directed edges
+  and the return route has a different id.
+- **`Systems/LapService`** (ModuleScript, server) — a lap means "every
+  required fort TYPE, then the castle". By type, so bouncing between two Sun
+  forts cannot finish a lap.
+- **`Systems/ValuationService`** (ModuleScript, server) — Total Magic is
+  `CM + land + symbols`, recomputed and never cached. CM is spendable cash;
+  TM is what standings and victory read.
+- **`Systems/VictoryService`** (ModuleScript, server) — victory in two steps.
+  `RefreshGoalStates` marks the goal-reached *state*, which can be lost;
+  `TryConfirmAtCastle` **re-checks TM** on arrival, so a rival who takes your
+  land on the way home can put you back under the line.
+- **`Systems/DeckService`** (ModuleScript, server) — the book, hand, discard
+  and recycling. Cards are **instances** with their own ids, so playing one
+  consumes it and instance identity is what makes secrecy possible: there is
+  something to withhold.
 - **`Systems/MovementService`** (ModuleScript, server) — owns each Cepter's
   (player's) board position and dice rolling (`RollDice`, `MoveCepter`,
   `GetCurrentTile`, `GetLapCount`). Moves tile-by-tile via
@@ -339,17 +343,18 @@ Systems built so far:
   directly — this module stays its sole owner. A queued attack buff is
   additive and consumed (win or lose) on that player's next `ChallengeTile`;
   a defender HP buff lasts until that tile's defender record is replaced.
-- **`Systems/CardEffectService`** (ModuleScript, server) — resolves what a
-  Spell/Item card actually does when played, layered on CardService/
-  BattleService/EconomyService through their public APIs (same pattern
-  BattleService uses on BoardService/CardService). `CastSpell` (Signal
-  Boost) queues an ST bonus for the caster's next challenge — no target
-  needed. `UseItem` (Ninth Signal Charm) permanently raises the HP of a
-  creature the caster is currently defending a tile with, and needs an
-  explicit target tile id — the project's first action requiring a target
-  beyond "the tile you're standing on", which is what UIService's
-  `TargetTileBox` feeds. An invalid item target refunds the Magic already
-  spent rather than eating it.
+- **`Systems/CardEffectService`** (ModuleScript, server) — resolves a played
+  card by running its declared effects. **Rewritten in Milestone 6.** It used
+  to be two hardcoded behaviours, `CastSpell` (Signal Boost) and `UseItem`
+  (Ninth Signal Charm), each its own branch — exactly the shape the brief
+  forbids, and one that does not survive a real card list: the third card
+  that boosts an attack would have been a third branch doing the same thing.
+  Now a card carries an `Effects` list written in EffectPrimitives'
+  vocabulary and resolving it means running each entry. Cost is charged
+  **first**; if any effect fails the cost is refunded and the card is not
+  consumed. That is a refund, not a rollback — effects that already
+  succeeded are not undone, which is why primitives validate before they
+  mutate, and the limit is documented in the module's own header.
 - **`Shared/PhaseGraph`** (ModuleScript) — the legal phase transition table,
   as data. States which transitions exist; MatchOrchestrator decides when to
   take them. A move not listed cannot happen. Several rules are enforced
@@ -428,18 +433,35 @@ Systems built so far:
   step or minimum player count — the match is implicitly in progress from
   the first registered player onward, same always-on-world style the rest
   of the project uses) or rematch/return-to-lobby after `MatchEnded`.
-- **`Systems/TerraformService`** (ModuleScript, server) — changes a
-  Property tile's era for Magic (`TerraformTile`), cost scaling with the
-  tile's level and with a surcharge for committing to a specific era over
-  reverting to neutral (`GetTerraformCost`). Restricted to **unclaimed**
-  tiles only — an owned tile's defender has a `CurrentHP` cached at summon
-  time (base HP + land bonus if era matched then); changing era afterward
-  would leave that stale since BattleService doesn't recompute it on a
-  later era change. Fixing that needs deliberately touching BattleService's
-  defender state, not as a side effect of this module, so it's deferred —
-  terraform before claiming, not after. Calls `BoardService.SetEra`/
-  `EconomyService.SpendMagic` directly (layered on top, same pattern as
-  other Systems-on-Systems dependencies).
+- **`Systems/StatusService`** (ModuleScript, server) — the status registry
+  and the ordered hook dispatcher. `Apply(spec)` creates a status;
+  `RunHook(hook, context, value)` folds every matching status through a
+  timing hook in **priority order** (ties by application order) and logs the
+  resolved sequence; `FireHook` is the no-value form for hooks that act by
+  side effect; `TickDurations(durationType, scopeUserId)` expires them.
+  Handler errors are isolated — one bad card cannot strand a turn. Stacking
+  is a declared policy (Replace / Stack / Ignore / RefreshDuration), and
+  `ReplacementGroup` evicts across *different* kinds, which is what stops a
+  player being both forced to roll a 6 and unable to roll. `ScopeUserId`
+  names whose turns a status counts down on when that is neither the caster
+  nor the target — a poison on an opponent's creature is owned by the caster
+  and targets a node, so without it, it belongs to nobody's turn.
+  Knows nothing about what any status *does*.
+- **`Systems/StatusDefinitions`** (ModuleScript, server) — what each kind
+  does, keyed by kind, in one file. Behaviour has to be code (a hook is a
+  function), but it lives here once rather than on cards: a card that poisons
+  says `{ Kind = "Poison", Turns = 3 }` and reuses this. Adding a status is
+  an entry here plus the cards that apply it — no service changes, because
+  StatusService dispatches whatever it finds. Currently ForcedRoll, Haste,
+  Slow, RollClamp, Poison, Paralysis, AttackBoost, GlobalAttackShift.
+- **`Systems/EffectPrimitives`** (ModuleScript, server) — the closed
+  vocabulary a card's effects are written in, and the reason there is no
+  module-per-card. Each primitive declares its target KIND; the resolver
+  turns that into a concrete id, so primitives never parse player input.
+  Every one returns an ActionResult and a primitive that cannot act must
+  **fail** rather than silently doing nothing, because the caller refunds on
+  failure — a spell that quietly fizzles while taking the Magic is worse than
+  one that is refused.
 - **`Shared/Remotes`** (ModuleScript) — the only client-server bridge so
   far. Creates (server) / waits for (client) a fixed set of RemoteEvents
   under `ReplicatedStorage > Remotes`, returned as a name-keyed table so
@@ -656,11 +678,13 @@ the turn holder, and hard-coding "active player" made that impossible. The
 hand spotlight follows the same rule — whoever is currently entitled to decide
 sees their own cards.
 
-**Not done, honestly:** poison and paralysis. The brief lists them here, but
-they are statuses with durations outliving a battle and StatusService is M6;
-faking them as battle-local flags would pass a test and model the wrong thing.
-`BothDestroyed` is handled but unreachable with the current keywords — Reflect
-zeroes incoming damage and so spares the reflector.
+**Deferred out of M4, delivered in M6:** poison and paralysis. The brief listed
+them here, but they are statuses with durations outliving a battle and
+faking them as battle-local flags would have passed a test while modelling the
+wrong thing. They now live in `StatusDefinitions`.
+
+`BothDestroyed` is handled but still unreachable with the current keywords —
+Reflect zeroes incoming damage and so spares the reflector.
 
 **Milestone 5 is complete.** `TerritoryService` replaces BoardService and
 TerraformService, keyed by **node id** — one name for a place on the board
@@ -689,11 +713,73 @@ is bankrupt.
 Terraforming works on **your own occupied land** — the unclaimed-only rule was
 a workaround for the M4 HP defect, and fixing that removed its reason.
 
+**Milestone 6 is complete for statuses and card effects. Special nodes are
+NOT done and are deliberately deferred — see the end of this section.**
+
+`StatusService` is the piece the previous five milestones kept deferring things
+into. A status is a record with a kind, a target, a duration and a priority;
+`RunHook` folds every matching one through a timing hook in priority order and
+**logs the resolved order**, which is what makes "why was my roll a 6"
+answerable after the fact. Behaviour lives in `StatusDefinitions`, keyed by
+kind, so a second poison card reuses the definition rather than describing
+poisoning again.
+
+Ordering is the whole point, and it is enforced by priority rather than by
+luck: `ForcedRoll` runs at −100 so a haste applies **on top of** the forced
+value instead of being overwritten by it, and `RollClamp` runs at +1000 so it
+bounds whatever the others produced. A forced roll consumes itself in its own
+handler (`status.Consumed`), so it is spent by the roll it forces and cannot
+leak into a later turn. `ForcedRoll` and `Paralysis` share a
+`ReplacementGroup`, so you cannot be simultaneously forced to roll a 6 and
+unable to roll.
+
+`EffectPrimitives` is the closed vocabulary a card's effects are written in —
+GainMagic, LoseMagic, Draw, ForceRoll, ApplyStatus, ApplyCreatureStatus,
+ApplyGlobalStatus, BoostNextAttack, BuffDefenderHP, Teleport. A card carries an
+`Effects` list; `CardEffectService` looks each verb up and runs it. **No module
+per card and no `if card.Name ==` chain.** Adding a card that draws three needs
+no code at all. `EffectSpec` walks the whole library and asserts every declared
+primitive exists, so a typo in CardData fails a test rather than a live match.
+
+Cost is charged **first** — a spell that resolves before it is paid for can be
+cast without the Magic — and if any effect fails the cost is refunded and the
+card is **not consumed**. This is a refund, not a rollback: effects that already
+succeeded are not undone, which is why primitives validate before they mutate.
+Documented as a limit in CardEffectService's own header.
+
+**`SpellChoice` now stops.** It was traversed through M1–M5 because there was
+nothing to cast. Declining is a real choice (`SkipSpell`) rather than the
+absence of one, for the same reason `No Item` is a button: otherwise the server
+has already moved to `RollReady` before the client can offer anything.
+
+Two battle special cases became ordinary statuses. `BattleService.QueueAttackBuff`'s
+private `_attackBuffs` table is now `AttackBoost` resolved through
+`BeforeBattleStats`, and both combatants run the same fold — which is how
+`GlobalAttackShift` reaches the defender without needing to know a battle has
+sides. Poison damages through `BattleService.DamageDefender` rather than writing
+`CurrentHP` directly, because that service is the sole owner of defender state
+and a private write also skips the signal the board repaints on.
+
+`ScopeUserId` exists because a poison cast by Alice onto Bob's creature is
+owned by Alice and targets a *node*: without it the status belongs to nobody's
+turn and never expires. Whoever applies a status knows whose turns it counts
+down on; StatusService cannot work it out.
+
+**UNVERIFIED against the source game:** poison ticks at the *end* of the
+afflicted creature's owner's turn. Saga may tick at the start instead, which
+differs by one tick when the poison lands mid-round. Marked in
+`StatusDefinitions.Poison`.
+
+**Deferred out of M6 and still missing:** `NodeEffectService` and special nodes
+— shrine, Fortune Teller, Fountain, Temple/symbols, Board Action. Neither
+CurrentLoop nor TestBoard01 has any, so there is nothing to exercise them
+against; they need a board authored for them first.
+
 Milestones, in order: **M0 safety net and schemas** (done), **M1 match/turn
 state machine** (done), **M2 graph movement** (done), **M3 book/hand/card
 lifecycle** (done), **M4 landing and battle** (done), **M5 territory and full
-economy** (done), M6 card/status/special-node engine, M7 content and
-presentation, M8 secondary-system skeletons. Build a complete
+economy** (done), **M6 card/status engine** (done; special nodes deferred),
+M7 content and presentation, M8 secondary-system skeletons. Build a complete
 local match before matchmaking, campaign or monetization; those get interfaces
 early and skeletal implementations.
 

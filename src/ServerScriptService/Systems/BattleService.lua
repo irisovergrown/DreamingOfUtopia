@@ -110,7 +110,7 @@ local SPEED_RANK = {
 	[Enums.SpeedClass.Last] = 1,
 }
 
-local _territory, _card, _economy, _deck
+local _territory, _card, _economy, _deck, _status
 
 -- tileId -> creature state
 local _defenders = {}
@@ -125,6 +125,7 @@ function BattleService.Init(deps)
 	_card = deps.Card
 	_economy = deps.Economy
 	_deck = deps.Deck
+	_status = deps.Status
 
 	_defenders = {}
 	_attackBuffs = {}
@@ -604,6 +605,27 @@ local function commitItem(userId, instanceId, expectedStatus, expectedUserId, cr
 	return instance.CardId, nil
 end
 
+-- Every ST modifier that is not the card or its item, folded in one place.
+-- Both combatants run the same hook, which is how a match-wide shift reaches
+-- the defender without GlobalAttackShift needing to know a battle has sides.
+-- The legacy `_attackBuffs` table seeds the value so a caller that bypassed
+-- StatusService still works; nothing in the shipped code does.
+local function battleSTBonus(userId, isAttacker, tileId)
+	local seed = 0
+	if isAttacker then
+		seed = _attackBuffs[userId] or 0
+		_attackBuffs[userId] = nil
+	end
+	if _status == nil then
+		return seed
+	end
+	return _status.RunHook(Enums.TimingHook.BeforeBattleStats, {
+		UserId = userId,
+		IsAttacker = isAttacker,
+		NodeId = tileId,
+	}, seed) or 0
+end
+
 function BattleService.ChooseAttackerItem(userId, instanceId)
 	local cardId, failure = commitItem(
 		userId, instanceId,
@@ -637,16 +659,17 @@ function BattleService.ChooseDefenderItem(userId, instanceId)
 		CardId = battle.AttackerCardId,
 		InstanceId = battle.AttackerInstanceId,
 		ItemCardId = battle.AttackerItemCardId,
-		BonusST = _attackBuffs[battle.AttackerUserId] or 0,
+		BonusST = battleSTBonus(battle.AttackerUserId, true, tileId),
 	})
-	_attackBuffs[battle.AttackerUserId] = nil
 
 	local defenderState = battle.DefenderState
 	local defender = buildCombatant({
 		UserId = battle.DefenderUserId,
 		CardId = defenderState.CardId,
 		ItemCardId = cardId,
-		BaseST = defenderState.BaseST + defenderState.BonusST,
+		BaseST = defenderState.BaseST
+			+ defenderState.BonusST
+			+ battleSTBonus(battle.DefenderUserId, false, tileId),
 		CurrentHP = defenderState.CurrentHP,
 	})
 	defender.State = defenderState
@@ -666,7 +689,21 @@ end
 
 -- === Effects other systems apply ============================================
 
+-- Retained so an older caller does not break, but the ST bonus is a status
+-- now: StatusDefinitions.AttackBoost on the caster, resolved through the
+-- BeforeBattleStats hook with everything else that modifies a combatant. The
+-- private table this used to write into was the exact "unrelated boolean per
+-- effect" shape StatusService exists to replace.
 function BattleService.QueueAttackBuff(userId, bonusST)
+	if _status ~= nil then
+		_status.Apply({
+			Kind = "AttackBoost",
+			TargetId = userId,
+			OwnerPlayerId = userId,
+			Value = bonusST,
+		})
+		return
+	end
 	_attackBuffs[userId] = (_attackBuffs[userId] or 0) + bonusST
 end
 
@@ -686,6 +723,27 @@ function BattleService.ApplyDefenderHPBuff(userId, tileId, bonusHP)
 	state.CurrentHP += bonusHP
 	BattleService.DefenderBuffed:Fire(tileId, state.CurrentHP)
 	return ActionResult.ok({ TileId = tileId, CurrentHP = state.CurrentHP })
+end
+
+-- Damage to a defender from OUTSIDE a battle — poison, a hostile territory
+-- effect. It goes through this module rather than a status writing to the
+-- creature table directly, for the same reason QueueAttackBuff exists: this is
+-- the sole owner of defender state, and a caller that mutates it privately
+-- also skips the signal the board repaints on.
+--
+-- Floors at 1 unless the caller explicitly allows a kill. A creature dying
+-- outside a battle would leave a territory owned by nobody, and no other code
+-- path expects that state.
+function BattleService.DamageDefender(tileId, amount, canKill)
+	local state = _defenders[tileId]
+	if state == nil then
+		return nil
+	end
+
+	local floor = canKill and 0 or 1
+	state.CurrentHP = math.max(state.CurrentHP - (amount or 0), floor)
+	BattleService.DefenderBuffed:Fire(tileId, state.CurrentHP)
+	return state.CurrentHP
 end
 
 return BattleService

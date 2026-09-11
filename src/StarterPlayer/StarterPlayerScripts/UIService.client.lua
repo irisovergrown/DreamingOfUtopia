@@ -118,10 +118,15 @@ end
 
 local elementBox = createTextBox("ElementBox", 6, "element id (blank = neutral)")
 local levelBox = createTextBox("LevelBox", 7, "develop to level (2-5)")
+-- One box for both kinds of spell target. The client cannot know which a card
+-- wants — that is declared per effect on the server — so it sends the typed
+-- text as BOTH a node id and a user id and lets CardEffectService take the one
+-- the effect actually declared. Same raw-id debug-panel style as the rest.
+local spellTargetBox = createTextBox("SpellTargetBox", 8, "spell target (node id or user id)")
 
 local buttonRow = Instance.new("Frame")
 buttonRow.Name = "ButtonRow"
-buttonRow.LayoutOrder = 8
+buttonRow.LayoutOrder = 9
 buttonRow.Size = UDim2.new(1, 0, 0, 28)
 buttonRow.BackgroundTransparency = 1
 buttonRow.Parent = frame
@@ -179,6 +184,29 @@ end
 -- Buttons declare which intent they send and how to build its payload; the
 -- table below is the only place a button and an intent are paired.
 local buttonDefinitions = {
+	-- The spell phase. Declining is its own button for the same reason No Item
+	-- is: the server now WAITS in SpellChoice, so "I am not casting" has to be
+	-- something the player says rather than something the server assumes.
+	{
+		Name = "CastSpellButton",
+		Text = "Cast",
+		Intent = Intent.CastSpell,
+		Payload = function()
+			if selectedInstanceId == nil then
+				return nil, "select a spell from your hand first"
+			end
+			local target = spellTargetBox.Text
+			if target == "" then
+				target = nil
+			end
+			return {
+				InstanceId = selectedInstanceId,
+				TargetNodeId = target,
+				TargetUserId = target and tonumber(target) or nil,
+			}
+		end,
+	},
+	{ Name = "SkipSpellButton", Text = "No Spell", Intent = Intent.SkipSpell },
 	{ Name = "RollButton", Text = "Roll", Intent = Intent.Roll },
 	{
 		Name = "SummonButton",

@@ -31,6 +31,17 @@
 		and logged, because a status or card that intervenes on any of these
 		has to know exactly when it runs.
 
+	Statuses:
+		A roll is not what the dice said. The natural roll is folded through
+		ModifyRoll, so a Holy Word, a haste and the legal-range clamp are one
+		mechanism applied in priority order rather than three branches here.
+		Both numbers are returned: the client shows the natural dice AND the
+		modified total, which is the only way a player can see that something
+		interfered with them.
+
+		Whether a roll happens at all is BeforeRoll, so paralysis is a status
+		like any other rather than a flag this module has to remember to check.
+
 	Transports:
 		Entering a node with a transport relocates the token. A MandatoryWarp
 		fires even when merely crossed; a LandingWarp fires only when the move
@@ -48,12 +59,13 @@
 		layer) keep working while territory state migrates in Milestone 5.
 
 	Public API:
-		MovementService.Init(deps)              -- deps.Graph, deps.Lap, deps.Random
+		MovementService.Init(deps)  -- deps.Graph, deps.Lap, deps.Random, deps.Status
 		MovementService.RegisterCepter(playerOrUserId)
 		MovementService.RemoveCepter(playerOrUserId)
 		MovementService.GetCurrentNodeId(userId) -> nodeId or nil
 		MovementService.GetCurrentTile(playerOrUserId) -> StudioNodeId or nil
-		MovementService.RollDice(diceCount?) -> total, rolls
+		MovementService.CanRoll(userId) -> boolean
+		MovementService.RollDice(diceCount?, userId?) -> total, rolls, natural
 		MovementService.BeginMove(userId, steps, cause) -> ActionResult
 		MovementService.ChooseExit(userId, edgeId) -> ActionResult
 		MovementService.GetPendingChoice(userId) -> { NodeId, Options } or nil
@@ -93,7 +105,7 @@ MovementService.CepterLanded = Signal.new("Movement.CepterLanded")
 -- but would loop forever here. Cap and warn rather than hang.
 local MAX_TRANSPORT_HOPS = 16
 
-local _graph, _lap, _random
+local _graph, _lap, _random, _status
 
 -- userId -> { NodeId }
 local _positions = {}
@@ -115,6 +127,7 @@ function MovementService.Init(deps)
 	_graph = deps.Graph
 	_lap = deps.Lap
 	_random = deps.Random
+	_status = deps.Status
 
 	_positions = {}
 	_transactions = {}
@@ -158,20 +171,47 @@ end
 
 -- The range comes from the board, never a hardcoded d6: some maps present a
 -- range up to ten, and a global six-sided assumption would silently cap them.
-function MovementService.RollDice(diceCount)
+-- The roll pipeline. The raw dice are only the starting value: statuses then
+-- transform it through the ModifyRoll hook in priority order — a forced roll
+-- replaces it, a haste adds to it, and a clamp bounds the result. Returning
+-- the breakdown alongside the total is what lets a client explain why a 3
+-- became a 6 rather than just showing the 6.
+function MovementService.RollDice(diceCount, userId)
 	diceCount = diceCount or 1
 	local min, max = 1, 6
 	if _graph and _graph.IsLoaded() then
 		min, max = _graph.GetRollRange()
 	end
 
-	local rolls, total = {}, 0
+	local rolls, natural = {}, 0
 	for index = 1, diceCount do
 		local roll = _random and _random:NextInteger(min, max) or min
 		rolls[index] = roll
-		total += roll
+		natural += roll
 	end
-	return total, rolls
+
+	local total = natural
+	if _status ~= nil and userId ~= nil then
+		total = _status.RunHook(Enums.TimingHook.ModifyRoll, {
+			UserId = userId,
+			Min = min,
+			Max = max,
+			Natural = natural,
+		}, natural)
+	end
+
+	return total, rolls, natural
+end
+
+-- Whether the player is allowed to roll at all. A status may refuse it —
+-- paralysis returns false from BeforeRoll — and the caller skips straight to
+-- the end of the turn rather than rolling a number nobody may use.
+function MovementService.CanRoll(userId)
+	if _status == nil then
+		return true
+	end
+	local allowed = _status.RunHook(Enums.TimingHook.BeforeRoll, { UserId = userId }, true)
+	return allowed ~= false
 end
 
 -- === The movement transaction ==============================================

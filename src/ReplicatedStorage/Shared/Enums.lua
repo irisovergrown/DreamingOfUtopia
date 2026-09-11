@@ -255,6 +255,31 @@ Enums.Actor = makeEnum("Actor", {
 	"None",
 })
 
+-- What a status is attached to. A status is not always on a creature: a
+-- forced roll sits on a PLAYER, a curse can sit on a TERRITORY, and a global
+-- boost sits on the match itself with no target at all.
+Enums.StatusTarget = makeEnum("StatusTarget", {
+	"Player",
+	"Creature",
+	"Territory",
+	"Area",
+	"Global",
+})
+
+-- What happens when a status is applied to a target that already has one of
+-- the same kind.
+Enums.StackingPolicy = makeEnum("StackingPolicy", {
+	-- The new one wins and the old is discarded. Correct for a forced roll:
+	-- casting it twice should not queue two.
+	"Replace",
+	-- Both exist independently, each with its own duration.
+	"Stack",
+	-- The new one is discarded; the existing duration is untouched.
+	"Ignore",
+	-- Both exist, but the durations merge onto the existing record.
+	"RefreshDuration",
+})
+
 -- Whether a status/hand/book detail is visible to opponents.
 Enums.Visibility = makeEnum("Visibility", {
 	"Public",

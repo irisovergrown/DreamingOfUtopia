@@ -104,6 +104,9 @@ CardData.Cards = {
 		Element = nil,
 		Cost = 15,
 		EffectValue = 20,
+		Effects = {
+			{ Primitive = "BoostNextAttack", Value = 20 },
+		},
 		EffectDescription = "Raises your ST by 20 for your next Challenge this match (one use).",
 		RulesText = "+20 ST, next challenge.",
 	},
@@ -115,6 +118,9 @@ CardData.Cards = {
 		Element = nil,
 		Cost = 10,
 		EffectValue = 25,
+		Effects = {
+			{ Primitive = "BuffDefenderHP", Value = 25, Target = "ChosenTerritory" },
+		},
 		EffectDescription = "Permanently raises a defending creature's HP by 25 while it holds that tile.",
 		RulesText = "+25 HP while it holds.",
 	},
@@ -300,6 +306,9 @@ CardData.Cards = {
 		Element = nil,
 		Cost = 20,
 		EffectValue = 1,
+		Effects = {
+			{ Primitive = "ForceRoll", Value = 1, Target = "ChosenPlayer" },
+		},
 		EffectDescription = "Sets the target player's next roll to exactly 1.",
 		RulesText = "Next roll becomes 1.",
 	},
@@ -310,6 +319,9 @@ CardData.Cards = {
 		Element = nil,
 		Cost = 20,
 		EffectValue = 6,
+		Effects = {
+			{ Primitive = "ForceRoll", Value = 6, Target = "ChosenPlayer" },
+		},
 		EffectDescription = "Sets the target player's next roll to exactly 6.",
 		RulesText = "Next roll becomes 6.",
 	},
@@ -320,8 +332,76 @@ CardData.Cards = {
 		Element = nil,
 		Cost = 15,
 		EffectValue = 2,
-		EffectDescription = "Draw two cards.",
+		Effects = {
+			{ Primitive = "Draw", Value = 2 },
+		},
 		RulesText = "Draw 2.",
+	},
+
+	-- === Status spells ===================================================
+	-- Added in Milestone 6 to exercise the status engine. Each is pure data:
+	-- the behaviour lives once in StatusDefinitions, so a second poison card
+	-- would reuse it rather than describe poisoning again.
+
+	{
+		Id = 24,
+		Name = "Corroded Tape",
+		CardType = "Spell",
+		Element = nil,
+		Cost = 25,
+		Effects = {
+			{ Primitive = "ApplyCreatureStatus", Status = "Poison", Value = 10, Turns = 3, Target = "ChosenTerritory" },
+		},
+		EffectDescription = "Poisons a defending creature for 10 HP a turn, for three turns.",
+		RulesText = "Poison 10, 3 turns.",
+	},
+	{
+		Id = 25,
+		Name = "Dead Air",
+		CardType = "Spell",
+		Element = nil,
+		Cost = 30,
+		Effects = {
+			{ Primitive = "ApplyStatus", Status = "Paralysis", Turns = 1, Target = "ChosenPlayer" },
+		},
+		EffectDescription = "The target player does not roll on their next turn.",
+		RulesText = "Target skips their next roll.",
+	},
+	{
+		Id = 26,
+		Name = "Overclock",
+		CardType = "Spell",
+		Element = nil,
+		Cost = 20,
+		Effects = {
+			{ Primitive = "ApplyStatus", Status = "Haste", Value = 2, Turns = 2, Target = "Caster" },
+		},
+		EffectDescription = "Adds 2 to your rolls for two turns.",
+		RulesText = "+2 to your rolls, 2 turns.",
+	},
+	{
+		Id = 27,
+		Name = "Signal Flood",
+		CardType = "Spell",
+		Element = nil,
+		Cost = 40,
+		Effects = {
+			{ Primitive = "ApplyGlobalStatus", Status = "GlobalAttackShift", Value = 10, Turns = 1 },
+		},
+		EffectDescription = "Every creature gains 10 ST for a round.",
+		RulesText = "All creatures +10 ST this round.",
+	},
+	{
+		Id = 28,
+		Name = "Homeward Signal",
+		CardType = "Spell",
+		Element = nil,
+		Cost = 35,
+		Effects = {
+			{ Primitive = "Teleport", NodeId = "Castle", Target = "Caster" },
+		},
+		EffectDescription = "Recalls you to the castle. Does not count as crossing it.",
+		RulesText = "Recall to the castle.",
 	},
 }
 
