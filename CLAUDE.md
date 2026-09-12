@@ -770,6 +770,15 @@ afflicted creature's owner's turn. Saga may tick at the start instead, which
 differs by one tick when the poison lands mid-round. Marked in
 `StatusDefinitions.Poison`.
 
+**The status set spell cards will actually use is `docs/status-backlog.md`**
+(recorded 2026-09-11, the developer's own list, canonical). M6 built only enough
+statuses to prove the engine worked. Five of the seven are done or half-done;
+the two genuinely missing ones — **Silenced** and **Invulnerable/shielded** —
+need a *dispatch site* rather than just a definition: `Enums.TimingHook`
+declares `BeforeSpell` and `OnDamage`, and **nothing calls either**, so a
+definition hanging off them is dead code until some service folds through them.
+Do not invent statuses outside that list.
+
 **Deferred out of M6 and still missing:** `NodeEffectService` and special nodes
 — shrine, Fortune Teller, Fountain, Temple/symbols, Board Action. Neither
 CurrentLoop nor TestBoard01 has any, so there is nothing to exercise them
