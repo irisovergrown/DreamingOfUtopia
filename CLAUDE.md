@@ -14,6 +14,13 @@ laptop, work computer) and multiple Claude sessions (cloud/web and local).
 > paragraphs. Where this file and HANDOFF.md disagree, trust HANDOFF.md (and the
 > code over both). The milestone narrative from "Target architecture and
 > milestones" onward is accurate.
+>
+> **⚠ Overriding specs (2026-09-12), in HANDOFF.md §0.4:** the Claude Design
+> project (https://claude.ai/design/p/49d87599-1913-480b-86b4-a690cfca2bbd)
+> overrides everything here and in the code; UI must be **real authored GUI
+> instances, never built in code**, with **image slots** (asset ids) for anything
+> that could be an image; and the developer has their own card-setup design —
+> **ask before touching the card pipeline**.
 
 ## What this is
 

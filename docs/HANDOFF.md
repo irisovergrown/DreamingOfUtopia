@@ -70,6 +70,83 @@ its names, art, card text, or assets. All content is original.
   authored, renaming a status or keyword that cards reference, or starting a
   milestone. They like to confirm the plan at each milestone start.
 
+### 0.4 OVERRIDING SPECIFICATIONS (developer, 2026-09-12) — read before any UI or rules work
+
+These were set after the rest of this document was written, and they win over it.
+
+**A. The Claude Design project is the authoritative spec.**
+`https://claude.ai/design/p/49d87599-1913-480b-86b4-a690cfca2bbd` ("Design
+system for card game"). It **overrides everything decided so far and adds to
+it** — this document, `CLAUDE.md` and the code. Where it is silent, earlier
+decisions stand. Read it with the `DesignSync` tool (authorized on the main PC
+via `/design-login`). Key files: `Dreaming of Utopia - UI.dc.html` (annotated
+spec sheets 00–23) and the project's own `CLAUDE.md` (settled rules).
+`support.js` is only the canvas runtime.
+
+Overrides it already carries that the code does **not** yet reflect:
+
+- **Corporate vocabulary** for all player-facing words: Current Magic →
+  **Current Capital (CC)**, Total Magic → **Total Valuation (TV)**, creature →
+  **asset**, spell/cast → **directive/issue**, summon → **post**, tile →
+  **site**, castle → **head office**, fort → **branch**, territory →
+  **holdings**, toll → **fee**, book → **portfolio**, terraform → **rezone**,
+  invasion → **takeover**, land value/bonus → **site value/bonus**. Tone is
+  plain corporate, never joking. Card proper nouns are not renamed yet — ask.
+- **Max 3 copies** of a card in a 50-card portfolio (code allows 4).
+- **Items have no categories** — two generic item slots per battle (code has
+  Weapon/Armor/Tool/Scroll).
+- **Debt blocks everything except moving.** Debt = negative CC and frozen TV;
+  no elimination for money. Can't-pay is a player choice: sell chosen holdings
+  or take debt.
+- **Rezoning** only on sites you own, costs CC **plus a TV penalty**; the asset
+  stays and only gains or loses the element-match bonus.
+- **Junctions:** you hold your heading through every four-way with no prompt;
+  only a T with no road ahead prompts, with exactly left or right; an expired
+  timer picks at random.
+- **Directive targeting is two-stage** (printed list of legal targets, then a
+  board cursor) with four modes: site, asset on a site, player, own piece.
+- **4 branch types per lap.**
+- **2v2 TV is pooled** — one meter and one goal per team.
+- **Card rewards:** one random card from a pool, **win or lose**. Never bought.
+- Element-match bonus HP prints as its own row, separate from site bonus.
+- Victory: reaching the goal latches the TV meter; the win is a **claim** at
+  the head office (the only 900ms hold key in the game).
+- Match log: public events only, current lap only.
+- UI hard rules: 24px minimum readable text at 1080p, 44px mobile hit targets,
+  four radii, four depth layers, mechanical motion only (no fades, springs,
+  pulsing glows), rejects are human sentences, internal phase names never
+  render, the standings rack **replaces the Roblox player list**.
+- Its recommended first build: a **Roblox vertical slice** — HUD chassis
+  (10-foot legibility), standings rack replacing the native player list, one
+  1400ms takeover, and the reject slip.
+
+**B. UI is authored instances, never built in code.** *(Stated by the
+developer as VERY IMPORTANT.)*
+
+- Every screen is made of real GUI instances saved in the place (ScreenGui,
+  Frame, TextLabel, ImageLabel, UIListLayout…), visible and editable in Studio.
+- Scripts may only find named elements, set text and values, toggle
+  visibility, and clone **authored templates** (for example a card template).
+  No `Instance.new` layout code.
+- The current `UIService.client.lua` builds its HUD in code; it gets
+  **replaced** under this rule, not extended.
+- Authored UI is developer content, like the board and models: **Rojo must not
+  manage wherever it lives**, or Rojo will delete or overwrite it. Scripts in
+  Rojo-managed folders bind to it by name. Whether to keep exported `.rbxm`
+  backups of the UI in git is an open question for the developer.
+
+**C. Image slots everywhere an image could go.**
+Anything that could be an image is an `ImageLabel` / `ImageButton` the
+developer fills by pasting an asset id (`rbxassetid://…`). Slots exist and are
+clearly named even while empty. Never substitute text art or code-drawn
+shapes where an image would do.
+
+**D. Cards: the developer has their own setup.**
+They have a specific way they want cards set up, **including a very easy way
+to add new cards**. It has **not been described yet**. Do not redesign
+`CardData`, the card template, or the card pipeline until they explain it —
+ask first.
+
 ---
 
 ## 1. THE PROJECT
