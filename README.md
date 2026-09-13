@@ -1,4 +1,4 @@
-# Dreaming of Utopia
+# Common Holdings
 
 Roblox board/card game (Culdcept-style). See `CLAUDE.md` for the full
 project brief and design context — it loads automatically for Claude Code

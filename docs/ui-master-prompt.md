@@ -1,4 +1,4 @@
-# Dreaming of Utopia — UI Master Prompt
+# Common Holdings — UI Master Prompt
 
 Paste everything below the line into Claude Design as a single brief. It is
 written to be read cold, without this repo. Update it here when a decision
@@ -14,7 +14,7 @@ overlay for data-heavy screens).
 
 ## ROLE
 
-You are the lead UI/UX and visual designer for **Dreaming of Utopia**, a
+You are the lead UI/UX and visual designer for **Common Holdings**, a
 Roblox board/card strategy game. Produce a complete, buildable interface
 design system and the screens that use it — not mood boards, not
 inspiration, not a style essay. Everything you draw has to survive being

@@ -1,4 +1,4 @@
-# DREAMING OF UTOPIA — FULL HANDOFF
+# COMMON HOLDINGS — FULL HANDOFF
 
 Snapshot: 2026-09-12. Git HEAD at time of writing: `0267f05` on branch
 `claude/dreaming-utopia-brief-mimfaw`.
@@ -160,13 +160,25 @@ shapes where an image would do.
   the cards folder lives.
 - Card ids 1–6 stay load-bearing for tests.
 
+**E. The game is now called "Common Holdings".** *(Developer, 2026-09-12.)*
+It was "Dreaming of Utopia". The new name fits the corporate retheme, since
+"holdings" is also an in-game term. Use **Common Holdings** in everything
+player-facing and in new docs, briefs and UI copy. The following **keep the old
+name** because they are identifiers, and renaming any of them is the
+developer's call: the GitHub repo `irisovergrown/DreamingOfUtopia`, the local
+folder `D:\random projects\DreamingOfUtopia`, the Rojo project name in
+`default.project.json`, the `[DreamingOfUtopia]` console log prefixes in code,
+the published Roblox place title ("Dreaming of Utopia [ALPHA]" until they
+change it), and the Claude Design file `Dreaming of Utopia - UI.dc.html`.
+No player-visible game text used the old name, so no game code changed.
+
 ---
 
 ## 1. THE PROJECT
 
 ### 1.1 What it is
 
-**Dreaming of Utopia** — a Roblox board/card strategy game, "Monopoly meets
+**Common Holdings** (formerly Dreaming of Utopia) — a Roblox board/card strategy game, "Monopoly meets
 Magic: The Gathering", in the lineage of **Culdcept Saga** (Xbox 360,
 OmiyaSoft). No Roblox game does this. Produced under the in-fiction studio
 banner **"Ninth Signal"**.

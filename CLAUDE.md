@@ -1,4 +1,4 @@
-# Dreaming of Utopia — Project Context
+# Common Holdings — Project Context
 
 This file loads automatically at the start of every Claude Code session in
 this repo. Read it fully before writing any code. It is the persistent
@@ -27,7 +27,7 @@ laptop, work computer) and multiple Claude sessions (cloud/web and local).
 
 A Roblox board/card game inspired by Culdcept Saga (Xbox 360, OmiyaSoft) — a
 Monopoly-meets-Magic:-The-Gathering hybrid. No prior Roblox version of this
-concept exists. Game name: **Dreaming of Utopia**.
+concept exists. Game name: **Common Holdings** (renamed from Dreaming of Utopia on 2026-09-12).
 
 ## Core gameplay reference (adapted from Culdcept Saga)
 
