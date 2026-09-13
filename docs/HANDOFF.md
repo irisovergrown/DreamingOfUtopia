@@ -141,11 +141,24 @@ developer fills by pasting an asset id (`rbxassetid://…`). Slots exist and are
 clearly named even while empty. Never substitute text art or code-drawn
 shapes where an image would do.
 
-**D. Cards: the developer has their own setup.**
-They have a specific way they want cards set up, **including a very easy way
-to add new cards**. It has **not been described yet**. Do not redesign
-`CardData`, the card template, or the card pipeline until they explain it —
-ask first.
+**D. Cards: the design document's layout, modular data, an asset id per card.**
+*(Developer, 2026-09-12.)*
+
+- Card faces follow the **card anatomy in the Claude Design document**, not the
+  current plain rounded-rectangle debug cards.
+- In code, cards must be **modular**: adding a new card should be fairly
+  simple. That means one self-contained definition, with no edits scattered
+  across services.
+- Every card definition has a clearly marked spot **at the top** for the card
+  art's **Asset ID**, which fills the art image slot on the card face.
+- Proposed, **not yet approved**: one ModuleScript per card in a `Cards`
+  folder, auto-discovered and validated at startup by a registry, with
+  `ArtAssetId` as the first field. The card face is one authored template in
+  the place with named slots, cloned and filled from the data.
+- Open question: are cards added **in Studio** or **as repo files**? Rojo
+  overwrites Studio edits in folders it manages, so the answer decides where
+  the cards folder lives.
+- Card ids 1–6 stay load-bearing for tests.
 
 ---
 

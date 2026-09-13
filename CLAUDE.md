@@ -19,8 +19,9 @@ laptop, work computer) and multiple Claude sessions (cloud/web and local).
 > project (https://claude.ai/design/p/49d87599-1913-480b-86b4-a690cfca2bbd)
 > overrides everything here and in the code; UI must be **real authored GUI
 > instances, never built in code**, with **image slots** (asset ids) for anything
-> that could be an image; and the developer has their own card-setup design —
-> **ask before touching the card pipeline**.
+> that could be an image; and cards use the design document's card layout, must
+> be **modular so adding a card is simple**, and each card definition carries its
+> **art Asset ID at the top**.
 
 ## What this is
 
