@@ -5,6 +5,16 @@ this repo. Read it fully before writing any code. It is the persistent
 memory for a project being developed across multiple machines (main PC,
 laptop, work computer) and multiple Claude sessions (cloud/web and local).
 
+> **⚠ Read `docs/HANDOFF.md` first (2026-09-12).** It is the verified, current
+> handoff: what exists, how to verify it, every known gap, and the ordered next
+> steps. Parts of THIS file still describe the pre-rebuild game — notably the
+> "Current implementation state" entries for RulesConfig, EraData, Movement,
+> CardData, CardService, Economy, Battle, MatchService, Remotes, Main,
+> UIService and CameraService, plus the "Already authored" and "Not yet built"
+> paragraphs. Where this file and HANDOFF.md disagree, trust HANDOFF.md (and the
+> code over both). The milestone narrative from "Target architecture and
+> milestones" onward is accurate.
+
 ## What this is
 
 A Roblox board/card game inspired by Culdcept Saga (Xbox 360, OmiyaSoft) — a
